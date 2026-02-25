@@ -5,7 +5,7 @@ Majestic RP Screenshot Sorter v4.0
 by create Orange · https://www.donationalerts.com/r/orange91323
 """
 
-import os, re, sys, shutil, threading, time, hashlib, webbrowser, json, datetime, bisect
+import os, re, sys, shutil, threading, time, hashlib, webbrowser, json, datetime, bisectа
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -19,7 +19,7 @@ import customtkinter as ctk
 from tkinter import filedialog, END, Text
 import tkinter as tk
 
-UPDATE_URL = "https://yoursite.com/api/version"
+UPDATE_URL = "https://api.github.com/repos/m1rageLA/Majestic-RP-Imgur-Reports-Sorter/releases/latest"
 DOWNLOAD_URL = "https://yoursite.com/download/MajesticSorter.exe"
 
 try:
@@ -120,26 +120,23 @@ def _get_hwid() -> str:
 
 def _check_license() -> bool:
     global PRO_FEATURES
-
-    # Пытаемся загрузить мастер-ключ из секретов
+    
     try:
         from secrets import MASTER_KEY
     except ImportError:
         MASTER_KEY = None
-
+    
     if not LICENSE_FILE.exists():
         PRO_FEATURES = False
         return False
     try:
         data = json.loads(LICENSE_FILE.read_text(encoding="utf-8"))
         key = data.get("key", "").strip().upper()
-
-        # Проверка мастер-ключа (если есть)
+        
         if MASTER_KEY and key == MASTER_KEY:
             PRO_FEATURES = True
             return True
-
-        # Проверка обычного ключа (формат MJ-XXXX-XXXX-XXXX)
+        
         if key.startswith("MJ-") and len(key) == 19:
             parts = key.split("-")
             if len(parts) == 4 and parts[0] == "MJ":
@@ -149,7 +146,7 @@ def _check_license() -> bool:
                     return True
     except Exception:
         pass
-
+    
     PRO_FEATURES = False
     return False
 
@@ -5097,4 +5094,5 @@ def main():
     App().mainloop()
 
 if __name__ == "__main__":
+
     main()
