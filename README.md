@@ -30,7 +30,3 @@ PRO версия включает:
 
 **create Orange**
 - Донат: https://www.donationalerts.com/r/orange91323
-
-## Идея
-
-AshHazee, Vlad Kimro
