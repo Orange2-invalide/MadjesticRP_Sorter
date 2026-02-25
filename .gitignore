@@ -1,0 +1,28 @@
+# Секреты
+secrets.py
+keygen.py
+generated_keys.txt
+license.key
+
+# Кэши
+__pycache__/
+*.pyc
+ocr_cache.json
+settings.json
+location_knowledge.json
+trigger_knowledge.json
+thresholds.json
+
+# Сборка
+build/
+dist/
+*.spec
+
+# Логи
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
