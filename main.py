@@ -5,7 +5,7 @@ Majestic RP Screenshot Sorter v4.0
 by create Orange · https://www.donationalerts.com/r/orange91323
 """
 
-import os, re, sys, shutil, threading, time, hashlib, webbrowser, json, datetime, bisectа
+import os, re, sys, shutil, threading, time, hashlib, webbrowser, json, datetime, bisect
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -20,7 +20,7 @@ from tkinter import filedialog, END, Text
 import tkinter as tk
 
 UPDATE_URL = "https://api.github.com/repos/m1rageLA/Majestic-RP-Imgur-Reports-Sorter/releases/latest"
-DOWNLOAD_URL = "https://yoursite.com/download/MajesticSorter.exe"
+DOWNLOAD_URL = ""
 
 try:
     from plyer import notification as _notify
@@ -5096,3 +5096,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+
