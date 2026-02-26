@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Majestic RP Screenshot Sorter v4.0.0
 by create Orange · https://www.donationalerts.com/r/orange91323
@@ -1062,8 +1064,17 @@ class Config:
     BASE: Tuple[int, int] = (1920, 1080)
 
     CHAT_SCAN_ROIS: List[Tuple[int, int, int, int]] = field(default_factory=lambda: [
-        (0, 700, 800, 380), (0, 800, 650, 280),
-        (400, 780, 1120, 280), (300, 700, 1320, 360), (0, 650, 960, 430),
+        # Для 1920x1080
+        (0, 700, 800, 380),
+        (0, 800, 650, 280),
+        (400, 780, 1120, 280),
+        (300, 700, 1320, 360),
+        (0, 650, 960, 430),
+        # Для меньших разрешений (1558x871 и подобных)
+        (0, 500, 600, 350),
+        (0, 550, 500, 300),
+        (0, 450, 700, 400),
+        (0, 400, 800, 450),
     ])
 
     TEXT_PURPLE_LO: Tuple[int, int, int] = (120, 30, 120);
@@ -2231,26 +2242,65 @@ def _check_trigger_with_translit(text, cfg):
 def find_trigger(ctx, diag=None, trigger_db=None):
     def lg(m):
         if diag: diag.append(m)
+        print(m)
 
     cfg = ctx.cfg
+
+    # ===== ТЕСТ: Сканируем всё изображение =====
+    lg(f"  [ТЕСТ] Сканирую всё изображение {ctx.w}x{ctx.h}")
+    try:
+        full_img = ctx.img
+        t_full, conf_full = _ocr.read(full_img, mc=0.05, mh=3, ml=2)
+        lg(f"  [ТЕСТ] OCR результат: '{t_full[:200] if t_full else 'ПУСТО'}'")
+
+        # Проверяем ключевые слова прямо в полном тексте
+        if t_full:
+            t_lower = t_full.lower()
+            # Ищем ключевые слова
+            if any(kw in t_lower for kw in ["лекарств", "препарат", "nekapctb", "npenapat", "lekarst", "preparat"]):
+                lg(f"  [ТЕСТ] ✓ Найдено: лекарство/препарат → TAB")
+                return True, "TAB", [t_full]
+            if any(kw in t_lower for kw in ["вакцин", "vakc", "bakuih", "прививк"]):
+                lg(f"  [ТЕСТ] ✓ Найдено: вакцина → VAC")
+                return True, "VAC", [t_full]
+            if any(kw in t_lower for kw in ["реаним", "reanim", "resuscitat", "спасен", "спасён"]):
+                lg(f"  [ТЕСТ] ✓ Найдено: реанимация → PMP")
+                return True, "PMP", [t_full]
+            if any(kw in t_lower for kw in ["вылечил", "вылечен", "лечил", "лечен", "вылеч"]):
+                lg(f"  [ТЕСТ] ✓ Найдено: вылечил → TAB")
+                return True, "TAB", [t_full]
+            if any(kw in t_lower for kw in ["таблетк", "таблет", "tabletk", "tablet"]):
+                lg(f"  [ТЕСТ] ✓ Найдено: таблетки → TAB")
+                return True, "TAB", [t_full]
+    except Exception as e:
+        lg(f"  [ТЕСТ] Ошибка OCR: {e}")
+    # ===== КОНЕЦ ТЕСТА =====
+
     all_texts = []
     seen_texts = set()
     trigger_found = False
     trigger_cat = ""
-    MAX_OCR_ROIS = 2
+    MAX_OCR_ROIS = 3
 
     scan_rois = list(cfg.CHAT_SCAN_ROIS)
     chat_roi = ctx.detect_chat_area(diag)
     if chat_roi:
         scan_rois.insert(0, chat_roi)
 
+    lg(f"  [триг] Размер изображения: {ctx.w}x{ctx.h}")
+    lg(f"  [триг] Масштаб: sx={ctx.sx:.2f} sy={ctx.sy:.2f}")
+    lg(f"  [триг] Проверяю {len(scan_rois)} областей")
+
     rois_with_ocr = 0
     for i, (rx, ry, rw, rh) in enumerate(scan_rois):
         if trigger_found or rois_with_ocr >= MAX_OCR_ROIS:
             break
+
         roi = ctx.crop(rx, ry, rw, rh)
         if roi is None:
             continue
+
+        lg(f"  [триг] roi{i} ({rx},{ry},{rw},{rh}) размер={roi.shape}")
 
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         if float(np.std(gray_roi)) < 8:
@@ -2259,6 +2309,7 @@ def find_trigger(ctx, diag=None, trigger_db=None):
             continue
 
         rois_with_ocr += 1
+        lg(f"  [триг] roi{i} - запускаю OCR...")
 
         h, w = roi.shape[:2]
         if w > 600:
@@ -2281,7 +2332,6 @@ def find_trigger(ctx, diag=None, trigger_db=None):
 
             lg(f"  [триг] roi{i}/v{vi} conf={conf:.2f}: '{t_clean[:60]}'")
 
-            # НОВОЕ: Проверка с транслитом
             found, cat = _check_trigger_with_translit(t_clean, cfg)
             if found:
                 trigger_found = True
@@ -2289,7 +2339,6 @@ def find_trigger(ctx, diag=None, trigger_db=None):
                 lg(f"  [триг] ✓ найден через транслит: {cat}")
                 break
 
-            # Старые проверки
             found, cat = _check_trigger_exact(t_clean, cfg)
             if found:
                 trigger_found = True
@@ -2315,7 +2364,6 @@ def find_trigger(ctx, diag=None, trigger_db=None):
     if trigger_found:
         return True, trigger_cat, all_texts
 
-    # Проверка всего текста с транслитом
     found_tr, cat_tr = _check_trigger_with_translit(comb, cfg)
     if found_tr:
         return True, cat_tr, all_texts
@@ -2335,8 +2383,8 @@ def find_trigger(ctx, diag=None, trigger_db=None):
 
     if any(r in comb for r in cfg.KW_REFUSE):
         return False, "", all_texts
-    return False, "", all_texts
 
+    return False, "", all_texts
 
 # ═══════════════════════════════════════════
 #  ИЗВЛЕЧЕНИЕ ПРИЗНАКОВ
@@ -6526,6 +6574,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
