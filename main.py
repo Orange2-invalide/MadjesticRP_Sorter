@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Majestic RP Screenshot Sorter v4.0.0
 by create Orange · https://www.donationalerts.com/r/orange91323
@@ -6528,5 +6526,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
