@@ -1,28 +1,39 @@
-# Секреты
-secrets.py
-keygen.py
-generated_keys.txt
-license.key
-
-# Кэши
+```gitignore
+# Python
 __pycache__/
-*.pyc
-ocr_cache.json
-settings.json
-location_knowledge.json
-trigger_knowledge.json
-thresholds.json
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
 
-# Сборка
+# PyInstaller
 build/
 dist/
 *.spec
-
-# Логи
-logs/
-*.log
 
 # IDE
 .idea/
 .vscode/
 *.swp
+*.swo
+
+# Data files
+*.json
+!package.json
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local settings
+settings.json
+license.key
+ocr_cache.json
+location_knowledge.json
+trigger_knowledge.json
+thresholds.json
+logs/
