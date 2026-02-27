@@ -26,13 +26,10 @@ import datetime
 from PIL import Image, ImageTk, ImageDraw
 
 import numpy as np
-from PIL import Image, ImageTk
 import customtkinter as ctk
 from tkinter import filedialog, Text, END
 import tkinter as tk
 from loguru import logger
-
-import sys
 
 
 def get_data_dir():
@@ -48,6 +45,9 @@ def get_data_dir():
 
 DATA_DIR = get_data_dir()
 
+APP_VERSION = "4.0.0"
+APP_AUTHOR = "create Orange"
+APP_DONATE = "https://www.donationalerts.com/r/orange91323"
 
 # ═══════════════════════════════════════════
 #  СИСТЕМА АВТООБНОВЛЕНИЯ
@@ -384,40 +384,6 @@ class UpdateDialog(ctk.CTkToplevel):
         apply_update(file_path)
         self.destroy()
 
-
-# ═══════════════════════════════════════════
-#  ОПРЕДЕЛЕНИЕ GPU
-# ═══════════════════════════════════════════
-
-def _detect_gpu_vendor() -> str:
-    """Определяет производителя GPU."""
-    try:
-        import torch
-        if torch.cuda.is_available():
-            return "NVIDIA"
-    except ImportError:
-        pass
-
-    try:
-        import onnxruntime as ort
-        providers = ort.get_available_providers()
-        if 'DmlExecutionProvider' in providers:
-            return "AMD/Intel (DirectML)"
-        if 'ROCMExecutionProvider' in providers:
-            return "AMD (ROCm)"
-    except ImportError:
-        pass
-
-    return "CPU"
-
-
-GPU_VENDOR = _detect_gpu_vendor()
-
-# Типы данных
-_U8 = np.uint8
-_U16 = np.uint16
-_F32 = np.float32
-
 # ═══════════════════════════════════════════
 #  АВТООБНОВЛЕНИЕ
 # ═══════════════════════════════════════════
@@ -531,8 +497,6 @@ _U8 = np.uint8
 _U16 = np.uint16
 _F32 = np.float32
 
-UPDATE_URL = "https://api.github.com/repos/m1rageLA/Majestic-RP-Imgur-Reports-Sorter/releases/latest"
-DOWNLOAD_URL = ""
 
 
 def _play_sort_sound():
@@ -559,31 +523,7 @@ def _play_error_sound():
         pass
 
 
-def _play_sort_sound():
-    try:
-        if winsound: winsound.MessageBeep(winsound.MB_OK)
-    except:
-        pass
 
-
-def _play_done_sound():
-    try:
-        if winsound: winsound.MessageBeep(winsound.MB_ICONASTERISK)
-    except:
-        pass
-
-
-def _play_error_sound():
-    try:
-        if winsound: winsound.MessageBeep(winsound.MB_ICONHAND)
-    except:
-        pass
-
-
-APP_VERSION = "3.0.0"
-APP_AUTHOR = "create Orange"
-APP_DONATE = "https://www.donationalerts.com/r/orange91323"
-APP_IDEAS = "AshHazee, Vlad Kimro"
 
 P = {
     "bg": "#0a0a0a", "card": "#131313", "card2": "#1a1a1a", "entry": "#1e1e1e",
@@ -759,16 +699,6 @@ def _check_license() -> bool:
         PRO_FEATURES = False
         return False
 
-def _check_update() -> dict:
-    """Проверяет наличие обновления"""
-    try:
-        import urllib.request
-        with urllib.request.urlopen(UPDATE_URL, timeout=5) as response:
-            data = json.loads(response.read().decode())
-            return data
-    except Exception:
-        return {}
-
 
 def generate_license_key() -> str:
     import random, string
@@ -780,21 +710,6 @@ def generate_license_key() -> str:
 
 
 SETTINGS_FILE = DATA_DIR / "settings.json"
-
-
-def load_settings() -> dict:
-    if SETTINGS_FILE.exists():
-        try:
-            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
-
-
-def save_settings(data: dict):
-    SETTINGS_FILE.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
 
 
 OCR_CACHE_FILE = DATA_DIR / "ocr_cache.json"
@@ -3955,17 +3870,7 @@ class App(ctk.CTk):
             s.after(400, s._ot)
 
     def _check_for_updates(s):
-        def check():
-            try:
-                data = _check_update()
-                latest = data.get("version", "")
-                if latest and latest != APP_VERSION:
-                    changelog = data.get("changelog", "")
-                    s.after(0, lambda: s._show_update_dialog(latest, changelog))
-            except Exception:
-                pass
-
-        threading.Thread(target=check, daemon=True).start()
+        pass
 
     def _show_update_dialog(s, version, changelog):
         dialog = ctk.CTkToplevel(s)
@@ -4040,8 +3945,6 @@ class App(ctk.CTk):
             s._log("🔑 PRO версия активирована", "gold")
         else:
             s._log("💡 Бесплатная версия. PRO: настройки → активация", "dim")
-
-    # ЭТИ МЕТОДЫ ДОЛЖНЫ БЫТЬ НА УРОВНЕ КЛАССА (тот же отступ что и _welcome)
 
     def _check_updates_background(s):
         """Проверяет обновления в фоне при запуске."""
@@ -5311,7 +5214,7 @@ class FolderReviewWindow(ctk.CTkToplevel):
         s.after(500, s._load_folders)
 
     def _learn_move(s, fp, cat, loc, folder_name):
-        if not getattr(s.az, 'is_pro', False):
+        if not PRO_FEATURES:
             return
         """Обучение на основе ручного перемещения."""
         try:
@@ -6574,5 +6477,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
