@@ -30,6 +30,14 @@ import customtkinter as ctk
 from tkinter import filedialog, Text, END
 import tkinter as tk
 from loguru import logger
+import mss
+import mss.tools
+try:
+    import keyboard
+    KEYBOARD_OK = True
+except ImportError:
+    KEYBOARD_OK = False
+    print("[DEBUG] keyboard не установлен — горячие клавиши оверлея недоступны")
 
 
 def get_data_dir():
@@ -44,6 +52,8 @@ def get_data_dir():
 
 
 DATA_DIR = get_data_dir()
+OCR_CACHE_FILE = DATA_DIR / "ocr_cache.json"
+OVERLAY_SETTINGS_FILE = DATA_DIR / "overlay_settings.json"
 
 APP_VERSION = "4.0.0"
 APP_AUTHOR = "create Orange"
@@ -544,9 +554,7 @@ _F32 = np.float32
 _CACHE_MAX = 500
 
 SETTINGS_FILE = DATA_DIR / "settings.json"
-LICENSE_FILE = DATA_DIR / "license.key"
 PRO_FEATURES = False
-
 
 def load_settings() -> dict:
     if SETTINGS_FILE.exists():
@@ -561,159 +569,6 @@ def save_settings(data: dict):
     SETTINGS_FILE.write_text(
         json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-
-
-def _get_hwid() -> str:
-    import platform
-    raw = platform.node() + os.environ.get("COMPUTERNAME", "") + os.environ.get("USERNAME", "")
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-def _check_license() -> bool:
-    """Проверяет лицензию через онлайн-проверку."""
-    global PRO_FEATURES
-
-    KEYS_URL = "https://gist.githubusercontent.com/Orange2-invalide/3ee82de29e91ca7d0fe33a3ed9f12c53/raw/keys.json"
-
-    if not LICENSE_FILE.exists():
-        print("[DEBUG] license.key не существует")
-        PRO_FEATURES = False
-        return False
-
-    try:
-        data = json.loads(LICENSE_FILE.read_text(encoding="utf-8"))
-        key = data.get("key", "").strip().upper()
-        print(f"[DEBUG] Ключ из файла: '{key}'")
-
-        if not key.startswith("MJ-") or len(key) < 15:
-            print(f"[DEBUG] Неверный формат ключа")
-            PRO_FEATURES = False
-            return False
-
-        key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
-        print(f"[DEBUG] Хэш ключа: {key_hash}")
-
-        # Онлайн проверка
-        try:
-            import urllib.request
-            print(f"[DEBUG] Запрос к: {KEYS_URL}")
-            req = urllib.request.Request(KEYS_URL, headers={"User-Agent": "MajesticSorter/2.0"})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                raw = response.read().decode('utf-8')
-                print(f"[DEBUG] Ответ сервера: {raw[:200]}")
-                online_data = json.loads(raw)
-
-                allowed_hashes = online_data.get("keys", [])
-                disabled_hashes = online_data.get("disabled_keys", [])
-
-                print(f"[DEBUG] Разрешённые хэши: {allowed_hashes}")
-                print(f"[DEBUG] Наш хэш в списке: {key_hash in allowed_hashes}")
-
-                # Проверяем что ключ не отключён
-                if key_hash in disabled_hashes:
-                    print("[DEBUG] ❌ Ключ отключён!")
-                    PRO_FEATURES = False
-                    return False
-
-                if key_hash in allowed_hashes:
-                    print("[DEBUG] ✅ PRO активирован!")
-                    data["verified"] = True
-                    data["verified_hash"] = key_hash
-                    data["last_check"] = datetime.datetime.now().isoformat()
-                    LICENSE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-                    PRO_FEATURES = True
-                    return True
-
-        except Exception as e:
-            print(f"[DEBUG] Ошибка сети: {e}")
-            # Оффлайн проверка
-            if data.get("verified") and data.get("verified_hash") == key_hash:
-                print("[DEBUG] Используем оффлайн-верификацию")
-                PRO_FEATURES = True
-                return True
-
-        PRO_FEATURES = False
-        return False
-
-    except Exception as e:
-        print(f"[DEBUG] Ошибка: {e}")
-        PRO_FEATURES = False
-        return False
-
-        # Генерируем хэш ключа
-        key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
-        print(f"[DEBUG] Хэш ключа: {key_hash}")
-
-        # Пробуем проверить онлайн
-        try:
-            import urllib.request
-            print(f"[DEBUG] Запрос к: {KEYS_URL}")
-            req = urllib.request.Request(KEYS_URL, headers={"User-Agent": "MajesticSorter/2.0"})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                raw = response.read().decode('utf-8')
-                print(f"[DEBUG] Ответ сервера: {raw[:200]}")
-                online_data = json.loads(raw)
-                allowed_hashes = online_data.get("keys", [])
-                print(f"[DEBUG] Разрешённые хэши: {allowed_hashes}")
-                print(f"[DEBUG] Наш хэш в списке: {key_hash in allowed_hashes}")
-
-                if key_hash in allowed_hashes:
-                    print("[DEBUG] ✅ PRO активирован!")
-                    data["verified"] = True
-                    data["verified_hash"] = key_hash
-                    LICENSE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-                    PRO_FEATURES = True
-                    return True
-                else:
-                    print("[DEBUG] ❌ Хэш не найден в списке разрешённых")
-
-        except Exception as e:
-            print(f"[DEBUG] Ошибка сети: {e}")
-            # Если есть оффлайн-верификация
-            if data.get("verified") and data.get("verified_hash") == key_hash:
-                print("[DEBUG] Используем оффлайн-верификацию")
-                PRO_FEATURES = True
-                return True
-
-        PRO_FEATURES = False
-        return False
-
-    except Exception as e:
-        print(f"[DEBUG] Ошибка чтения файла: {e}")
-        import traceback
-        traceback.print_exc()
-        PRO_FEATURES = False
-        return False
-
-    except Exception as e:
-        print(f"[DEBUG] Общая ошибка: {e}")
-        PRO_FEATURES = False
-        return False
-
-    except Exception as e:
-        print(f"[DEBUG] Ошибка: {e}")
-        PRO_FEATURES = False
-        return False
-
-    except Exception:
-        PRO_FEATURES = False
-        return False
-
-
-def generate_license_key() -> str:
-    import random, string
-    parts = ['MJ']
-    for _ in range(3):
-        parts.append(''.join(random.choices(
-            string.ascii_uppercase + string.digits, k=4)))
-    return '-'.join(parts)  # MJ-XXXX-XXXX-XXXX = 19 символов
-
-
-SETTINGS_FILE = DATA_DIR / "settings.json"
-
-
-OCR_CACHE_FILE = DATA_DIR / "ocr_cache.json"
-
 
 class OCRDiskCache:
     def __init__(s):
@@ -3303,6 +3158,1204 @@ class AnalyticsWindow(ctk.CTkToplevel):
 
 
 # ═══════════════════════════════════════════
+#  ОВЕРЛЕЙ СКРИНШОТЕРА
+# ═══════════════════════════════════════════
+
+class ScreenshotOverlay(ctk.CTkToplevel):
+    """Оверлей для быстрого создания скриншотов."""
+
+    def __init__(self, parent, log_fn=None):
+        super().__init__(parent)
+
+        self.parent = parent
+        self.log_fn = log_fn or print
+        self._is_visible = True
+        self._is_selecting_hospital = False
+        self._drag_data = {"x": 0, "y": 0, "dragging": False}
+        self._hotkey_ids = []
+        self._session_start = None
+        self._timer_running = False
+        self._sorting = False
+        self._sort_stop = threading.Event()
+
+        # Счётчики
+        self.counters = {"TAB": 0, "VAC": 0, "PMP": 0}
+
+        # Текущие настройки
+        self.current_hospital = "ELSH"
+        self.current_category = "TAB"
+        self.current_time_of_day = "day"
+        self.common_folder_mode = False
+        self.screenshot_folder = ""
+        self._filename_format = "category"
+
+        # Настройки горячих клавиш
+        self.hotkeys = {
+            "toggle_overlay": "ctrl+alt",
+            "screenshot": "f6",
+            "select_hospital": "f7"
+        }
+
+        # Загрузить настройки
+        self._load_settings()
+
+        # Настройка окна
+        self.title("Majestic Screenshoter")
+        self.configure(fg_color=P["bg"])
+        self.attributes("-topmost", True)
+        self.attributes("-alpha", 0.90)
+        self.overrideredirect(False)
+
+        # Размеры
+        self.minsize(300, 450)
+
+        # Позиция
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = self._settings.get("position", {}).get("x", sw - 320)
+        y = self._settings.get("position", {}).get("y", sh - 550)
+        self.geometry(f"310x500+{x}+{y}")
+
+        # Построить интерфейс
+        self._build()
+
+        # Привязки для перетаскивания
+        self.bind("<Button-1>", self._on_drag_start)
+        self.bind("<B1-Motion>", self._on_drag_motion)
+        self.bind("<ButtonRelease-1>", self._on_drag_end)
+
+        # Регистрация горячих клавиш
+        self._register_hotkeys()
+
+        # При закрытии
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        self.log_fn("  📸 Оверлей запущен", "success")
+
+    def _load_settings(self):
+        """Загружает настройки оверлея."""
+        self._settings = {}
+        if OVERLAY_SETTINGS_FILE.exists():
+            try:
+                self._settings = json.loads(
+                    OVERLAY_SETTINGS_FILE.read_text(encoding="utf-8"))
+
+                # Восстанавливаем настройки
+                self.hotkeys = self._settings.get("hotkeys", self.hotkeys)
+                self.current_hospital = self._settings.get("last_hospital", "ELSH")
+                self.current_category = self._settings.get("last_category", "TAB")
+                self.current_time_of_day = self._settings.get("last_time_of_day", "day")
+                self.screenshot_folder = self._settings.get("last_folder", "")
+                self.counters = self._settings.get("counters", self.counters)
+                self._filename_format = self._settings.get("filename_format", "category")
+
+            except Exception as e:
+                print(f"[OVERLAY] Ошибка загрузки настроек: {e}")
+
+    def _save_settings(self):
+        """Сохраняет настройки оверлея."""
+        try:
+            self._settings.update({
+                "position": {"x": self.winfo_x(), "y": self.winfo_y()},
+                "size": {"width": self.winfo_width(), "height": self.winfo_height()},
+                "hotkeys": self.hotkeys,
+                "last_hospital": self.current_hospital,
+                "last_category": self.current_category,
+                "last_time_of_day": self.current_time_of_day,
+                "last_folder": self.screenshot_folder,
+                "counters": self.counters,
+                "filename_format": self._filename_format,
+                "opacity": self.attributes("-alpha"),
+                "show_close_button": getattr(self, '_show_close_btn', False)
+            })
+            OVERLAY_SETTINGS_FILE.write_text(
+                json.dumps(self._settings, indent=2, ensure_ascii=False),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            print(f"[OVERLAY] Ошибка сохранения настроек: {e}")
+
+    def _build(self):
+        """Строит интерфейс оверлея."""
+
+        # Основной контейнер со скроллом
+        self.main_frame = ctk.CTkScrollableFrame(
+            self, fg_color="transparent",
+            scrollbar_button_color=P["border"],
+            scrollbar_button_hover_color=P["accent"]
+        )
+        self.main_frame.pack(fill="both", expand=True, padx=6, pady=6)
+
+        # ══ Заголовок ══
+        header = ctk.CTkFrame(self.main_frame, fg_color=P["card"],
+                              corner_radius=8, height=36)
+        header.pack(fill="x", pady=(0, 6))
+        header.pack_propagate(False)
+
+        ctk.CTkLabel(
+            header, text="📸 Majestic Screenshoter",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=P["accent"]
+        ).pack(side="left", padx=10, pady=6)
+
+        # Кнопка настроек
+        self.settings_btn = ctk.CTkButton(
+            header, text="⚙️", width=28, height=28,
+            fg_color="transparent", hover_color=P["bh"],
+            text_color=P["t2"], font=ctk.CTkFont(size=14),
+            command=self._open_settings
+        )
+        self.settings_btn.pack(side="right", padx=4, pady=4)
+
+        # Кнопка закрытия (скрыта по умолчанию)
+        self._show_close_btn = self._settings.get("show_close_button", False)
+        self.close_btn = ctk.CTkButton(
+            header, text="✕", width=28, height=28,
+            fg_color="transparent", hover_color=P["red"],
+            text_color=P["t2"], font=ctk.CTkFont(size=14),
+            command=self._on_close
+        )
+        if self._show_close_btn:
+            self.close_btn.pack(side="right", padx=(0, 4), pady=4)
+
+        # ══ Выбор папки ══
+        folder_frame = ctk.CTkFrame(self.main_frame, fg_color=P["card"], corner_radius=8)
+        folder_frame.pack(fill="x", pady=(0, 6))
+
+        ctk.CTkLabel(
+            folder_frame, text="📁 Папка для скринов:",
+            font=ctk.CTkFont(size=10), text_color=P["t2"]
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        folder_row = ctk.CTkFrame(folder_frame, fg_color="transparent")
+        folder_row.pack(fill="x", padx=8, pady=(0, 6))
+
+        self.folder_entry = ctk.CTkEntry(
+            folder_row, height=28,
+            fg_color=P["entry"], border_color=P["border"],
+            text_color=P["text"], font=ctk.CTkFont(size=9),
+            placeholder_text="Выберите папку..."
+        )
+        self.folder_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        if self.screenshot_folder:
+            self.folder_entry.insert(0, self.screenshot_folder)
+
+        ctk.CTkButton(
+            folder_row, text="...", width=32, height=28,
+            fg_color=P["entry"], hover_color=P["bh"],
+            border_width=1, border_color=P["border"],
+            text_color=P["t2"], font=ctk.CTkFont(size=10),
+            command=self._select_folder
+        ).pack(side="right")
+
+        # ══ Выбор больницы ══
+        hospital_frame = ctk.CTkFrame(self.main_frame, fg_color=P["card"], corner_radius=8)
+        hospital_frame.pack(fill="x", pady=(0, 6))
+
+        ctk.CTkLabel(
+            hospital_frame, text="Больница (F7 для выбора):",
+            font=ctk.CTkFont(size=10), text_color=P["t2"]
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        hospital_row = ctk.CTkFrame(hospital_frame, fg_color="transparent")
+        hospital_row.pack(fill="x", padx=8, pady=(0, 6))
+
+        ctk.CTkButton(
+            hospital_row, text="◀", width=30, height=30,
+            fg_color=P["entry"], hover_color=P["bh"],
+            text_color=P["t2"], font=ctk.CTkFont(size=12),
+            command=lambda: self._change_hospital(-1)
+        ).pack(side="left")
+
+        self.hospital_label = ctk.CTkLabel(
+            hospital_row, text="🏥 ELSH",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=P["accent"]
+        )
+        self.hospital_label.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkButton(
+            hospital_row, text="▶", width=30, height=30,
+            fg_color=P["entry"], hover_color=P["bh"],
+            text_color=P["t2"], font=ctk.CTkFont(size=12),
+            command=lambda: self._change_hospital(1)
+        ).pack(side="right")
+
+        self._update_hospital_display()
+
+        # ══ Выбор категории ══
+        category_frame = ctk.CTkFrame(self.main_frame, fg_color=P["card"], corner_radius=8)
+        category_frame.pack(fill="x", pady=(0, 6))
+
+        ctk.CTkLabel(
+            category_frame, text="Категория:",
+            font=ctk.CTkFont(size=10), text_color=P["t2"]
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        cat_row = ctk.CTkFrame(category_frame, fg_color="transparent")
+        cat_row.pack(fill="x", padx=8, pady=(0, 6))
+
+        self.cat_buttons = {}
+        cat_data = [
+            ("TAB", "💊 Табл", P["accent"]),
+            ("VAC", "💉 Вакц", P["blue"]),
+            ("PMP", "🚑 ПМП", P["orange"])
+        ]
+
+        for cat_id, cat_text, cat_color in cat_data:
+            btn = ctk.CTkButton(
+                cat_row, text=cat_text, height=32,
+                fg_color=P["entry"], hover_color=cat_color,
+                border_width=2, border_color=P["border"],
+                text_color=P["text"], font=ctk.CTkFont(size=10, weight="bold"),
+                command=lambda c=cat_id: self._select_category(c)
+            )
+            btn.pack(side="left", fill="x", expand=True, padx=1)
+            self.cat_buttons[cat_id] = (btn, cat_color)
+
+        self._update_category_display()
+
+        # ══ День/Ночь ══
+        time_frame = ctk.CTkFrame(self.main_frame, fg_color=P["card"], corner_radius=8)
+        time_frame.pack(fill="x", pady=(0, 6))
+
+        time_row = ctk.CTkFrame(time_frame, fg_color="transparent")
+        time_row.pack(fill="x", padx=8, pady=6)
+
+        ctk.CTkLabel(
+            time_row, text="☀️ День",
+            font=ctk.CTkFont(size=10), text_color=P["text"]
+        ).pack(side="left")
+
+        self.time_switch = ctk.CTkSwitch(
+            time_row, text="", width=46, height=22,
+            progress_color=P["purple"],
+            button_color=P["text"],
+            command=self._toggle_time
+        )
+        self.time_switch.pack(side="left", padx=10)
+
+        if self.current_time_of_day == "night":
+            self.time_switch.select()
+
+        ctk.CTkLabel(
+            time_row, text="🌙 Ночь",
+            font=ctk.CTkFont(size=10), text_color=P["text"]
+        ).pack(side="left")
+
+        # ══ Режим "В общую папку" ══
+        common_frame = ctk.CTkFrame(self.main_frame, fg_color=P["card"], corner_radius=8)
+        common_frame.pack(fill="x", pady=(0, 6))
+
+        common_row = ctk.CTkFrame(common_frame, fg_color="transparent")
+        common_row.pack(fill="x", padx=8, pady=6)
+
+        ctk.CTkLabel(
+            common_row, text="📁 В общую папку:",
+            font=ctk.CTkFont(size=10), text_color=P["text"]
+        ).pack(side="left")
+
+        self.common_switch = ctk.CTkSwitch(
+            common_row, text="", width=46, height=22,
+            progress_color=P["gold"],
+            button_color=P["text"],
+            command=self._toggle_common_folder
+        )
+        self.common_switch.pack(side="right")
+
+        # ══ Кнопка скриншота ══
+        self.screenshot_btn = ctk.CTkButton(
+            self.main_frame, text="📸 СКРИНШОТ (F6)",
+            height=45,
+            fg_color=P["accent"], hover_color=P["ah"],
+            text_color="#fff",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            corner_radius=10,
+            command=self._take_screenshot
+        )
+        self.screenshot_btn.pack(fill="x", pady=(0, 6))
+
+        # ══ Счётчики ══
+        stats_frame = ctk.CTkFrame(self.main_frame, fg_color=P["card"], corner_radius=8)
+        stats_frame.pack(fill="x", pady=(0, 6))
+
+        self.counters_label = ctk.CTkLabel(
+            stats_frame,
+            text="💊 0  💉 0  🚑 0  │  Всего: 0",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=P["text"]
+        )
+        self.counters_label.pack(padx=8, pady=4)
+
+        self.timer_label = ctk.CTkLabel(
+            stats_frame,
+            text="⏱ 00:00:00",
+            font=ctk.CTkFont(size=10),
+            text_color=P["dim"]
+        )
+        self.timer_label.pack(padx=8, pady=(0, 4))
+
+        self._update_counters_display()
+
+        # ══ Мини-лог ══
+        log_frame = ctk.CTkFrame(self.main_frame, fg_color=P["card"], corner_radius=8)
+        log_frame.pack(fill="x", pady=(0, 6))
+
+        ctk.CTkLabel(
+            log_frame, text="Последние:",
+            font=ctk.CTkFont(size=9), text_color=P["dim"]
+        ).pack(anchor="w", padx=8, pady=(4, 0))
+
+        self.mini_log = ctk.CTkLabel(
+            log_frame, text="—",
+            font=ctk.CTkFont(size=9, family="Consolas"),
+            text_color=P["t2"], justify="left", anchor="w"
+        )
+        self.mini_log.pack(fill="x", padx=8, pady=(0, 4))
+
+        self._log_entries = []
+
+        # ══ Автосортировка ══
+        sort_frame = ctk.CTkFrame(self.main_frame, fg_color=P["card"], corner_radius=8)
+        sort_frame.pack(fill="x", pady=(0, 6))
+
+        self.sort_btn = ctk.CTkButton(
+            sort_frame, text="🔄 Сортировать",
+            height=34,
+            fg_color=P["blue"], hover_color="#2563EB",
+            text_color="#fff",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._start_sorting
+        )
+        self.sort_btn.pack(fill="x", padx=8, pady=(6, 4))
+
+        self.sort_progress = ctk.CTkProgressBar(
+            sort_frame, height=6,
+            progress_color=P["accent"],
+            fg_color=P["entry"]
+        )
+        self.sort_progress.pack(fill="x", padx=8, pady=(0, 4))
+        self.sort_progress.set(0)
+
+        self.sort_status = ctk.CTkLabel(
+            sort_frame, text="",
+            font=ctk.CTkFont(size=9), text_color=P["dim"]
+        )
+        self.sort_status.pack(padx=8, pady=(0, 6))
+
+        # ══ Подпись ══
+        ctk.CTkLabel(
+            self.main_frame, text="create Orange",
+            font=ctk.CTkFont(size=9), text_color=P["dim"]
+        ).pack(anchor="w", pady=(4, 0))
+
+    def _select_folder(self):
+        """Выбор папки для скриншотов."""
+        folder = filedialog.askdirectory(title="Папка для скриншотов")
+        if folder:
+            self.screenshot_folder = folder
+            self.folder_entry.delete(0, END)
+            self.folder_entry.insert(0, folder)
+            self._save_settings()
+
+    def _ensure_folder(self):
+        """Проверяет/создаёт папку для скриншотов."""
+        if not self.screenshot_folder:
+            # Создаём папку на рабочем столе
+            desktop = Path.home() / "Desktop"
+            self.screenshot_folder = str(desktop / "MajesticScreenshots")
+            Path(self.screenshot_folder).mkdir(parents=True, exist_ok=True)
+
+            self.folder_entry.delete(0, END)
+            self.folder_entry.insert(0, self.screenshot_folder)
+
+            self._add_to_log(f"📁 Создана: {Path(self.screenshot_folder).name}")
+            self.log_fn(f"  📁 Создана папка: {self.screenshot_folder}", "info")
+
+            # Звук уведомления
+            try:
+                if winsound:
+                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except:
+                pass
+
+            self._save_settings()
+
+        # Создаём папку если не существует
+        Path(self.screenshot_folder).mkdir(parents=True, exist_ok=True)
+        return self.screenshot_folder
+
+    def _change_hospital(self, direction):
+        """Меняет больницу."""
+        hospitals = ["ELSH", "Sandy", "Paleto"]
+        current_idx = hospitals.index(self.current_hospital)
+        new_idx = (current_idx + direction) % len(hospitals)
+        self.current_hospital = hospitals[new_idx]
+        self._update_hospital_display()
+        self._save_settings()
+
+    def _update_hospital_display(self):
+        """Обновляет отображение больницы."""
+        icons = {"ELSH": "🏥", "Sandy": "🏜", "Paleto": "🌊"}
+        colors = {"ELSH": P["accent"], "Sandy": P["gold"], "Paleto": P["purple"]}
+
+        icon = icons.get(self.current_hospital, "🏥")
+        color = colors.get(self.current_hospital, P["accent"])
+
+        self.hospital_label.configure(
+            text=f"{icon} {self.current_hospital}",
+            text_color=color
+        )
+
+    def _select_category(self, category):
+        """Выбирает категорию."""
+        self.current_category = category
+        self._update_category_display()
+        self._save_settings()
+
+    def _update_category_display(self):
+        """Обновляет отображение категории."""
+        for cat_id, (btn, color) in self.cat_buttons.items():
+            if cat_id == self.current_category:
+                btn.configure(fg_color=color, border_color=color)
+            else:
+                btn.configure(fg_color=P["entry"], border_color=P["border"])
+
+    def _toggle_time(self):
+        """Переключает день/ночь."""
+        self.current_time_of_day = "night" if self.time_switch.get() else "day"
+        self._save_settings()
+
+    def _toggle_common_folder(self):
+        """Переключает режим общей папки."""
+        self.common_folder_mode = self.common_switch.get()
+        self._save_settings()
+
+    def _update_counters_display(self):
+        """Обновляет отображение счётчиков."""
+        tab = self.counters.get("TAB", 0)
+        vac = self.counters.get("VAC", 0)
+        pmp = self.counters.get("PMP", 0)
+        total = tab + vac + pmp
+
+        self.counters_label.configure(
+            text=f"💊 {tab}  💉 {vac}  🚑 {pmp}  │  Всего: {total}"
+        )
+
+    def _add_to_log(self, message):
+        """Добавляет сообщение в мини-лог."""
+        self._log_entries.insert(0, message)
+        self._log_entries = self._log_entries[:3]  # Максимум 3 записи
+
+        self.mini_log.configure(text="\n".join(self._log_entries))
+
+    def _start_timer(self):
+        """Запускает таймер сессии."""
+        if not self._timer_running:
+            self._session_start = time.time()
+            self._timer_running = True
+            self._update_timer()
+
+    def _update_timer(self):
+        """Обновляет таймер."""
+        if self._timer_running and self._session_start:
+            elapsed = int(time.time() - self._session_start)
+            hours = elapsed // 3600
+            minutes = (elapsed % 3600) // 60
+            seconds = elapsed % 60
+
+            self.timer_label.configure(
+                text=f"⏱ {hours:02d}:{minutes:02d}:{seconds:02d}"
+            )
+
+            self.after(1000, self._update_timer)
+
+    def _take_screenshot(self):
+        """Делает скриншот."""
+        try:
+            # Запускаем таймер при первом скрине
+            self._start_timer()
+
+            # Получаем папку
+            folder = self._ensure_folder()
+
+            # Скрываем оверлей
+            self.withdraw()
+            self.update()
+            time.sleep(0.05)  # Небольшая задержка
+
+            # Делаем скриншот
+            with mss.mss() as sct:
+                monitor = sct.monitors[1]  # Основной монитор
+                screenshot = sct.grab(monitor)
+
+                # Формируем имя файла
+                now = datetime.datetime.now()
+                date_str = now.strftime("%d.%m.%Y_%H-%M-%S")
+                time_only = now.strftime("%H-%M-%S")
+
+                if self.common_folder_mode:
+                    # В общую папку — используем выбранный формат
+                    if self._filename_format == "time":
+                        filename = f"{time_only}.png"
+                    elif self._filename_format == "date":
+                        filename = f"{date_str}.png"
+                    else:  # category
+                        time_suffix = "День" if self.current_time_of_day == "day" else "Ночь"
+                        filename = f"{self.current_category}_{self.current_hospital}_{time_suffix}_{date_str}.png"
+                    save_path = Path(folder) / filename
+                else:
+                    # С сортировкой по папкам
+                    time_suffix = "День" if self.current_time_of_day == "day" else "Ночь"
+
+                    if self._filename_format == "time":
+                        filename = f"{time_only}.png"
+                    elif self._filename_format == "date":
+                        filename = f"{date_str}.png"
+                    else:  # category
+                        filename = f"{self.current_category}_{self.current_hospital}_{time_suffix}_{date_str}.png"
+
+                    # Определяем подпапку
+                    cat_names = {"TAB": "Таблетки", "VAC": "Вакцины", "PMP": "ПМП"}
+                    cat_name = cat_names.get(self.current_category, "Другое")
+
+                    if self.current_category == "PMP":
+                        if self.current_hospital == "ELSH":
+                            subfolder = "ПМП - Город"
+                        else:
+                            subfolder = "ПМП - Пригород"
+                    else:
+                        hosp_names = {"ELSH": "ELSH", "Sandy": "Sandy Shores", "Paleto": "Paleto Bay"}
+                        hosp_name = hosp_names.get(self.current_hospital, self.current_hospital)
+                        subfolder = f"{cat_name} - {hosp_name}"
+
+                    if self.current_time_of_day == "night":
+                        subfolder += " [НОЧЬ]"
+
+                    save_dir = Path(folder) / subfolder
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    save_path = save_dir / filename
+
+                # Сохраняем
+                mss.tools.to_png(screenshot.rgb, screenshot.size, output=str(save_path))
+
+            # Показываем оверлей
+            self.deiconify()
+
+            # Обновляем счётчик
+            self.counters[self.current_category] = self.counters.get(self.current_category, 0) + 1
+            self._update_counters_display()
+
+            # Добавляем в лог
+            self._add_to_log(f"✓ {filename[:40]}...")
+
+            # Звук
+            try:
+                if winsound:
+                    winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
+            except:
+                pass
+
+            self._save_settings()
+
+        except Exception as e:
+            self.deiconify()
+            self._add_to_log(f"❌ Ошибка: {str(e)[:30]}")
+            self.log_fn(f"  ❌ Ошибка скриншота: {e}", "error")
+
+    def _start_sorting(self):
+        """Запускает сортировку."""
+        if self._sorting:
+            self._sort_stop.set()
+            return
+
+        folder = self.folder_entry.get().strip()
+        if not folder or not Path(folder).exists():
+            self._add_to_log("❌ Укажите папку")
+            return
+
+        # Ищем файлы для сортировки
+        files = list(Path(folder).glob("*.png"))
+        unsorted_files = [f for f in files if not any(
+            sub in str(f.parent) for sub in ["Таблетки", "Вакцины", "ПМП"]
+        )]
+
+        if not unsorted_files:
+            self._add_to_log("ℹ️ Нечего сортировать")
+            return
+
+        self._sorting = True
+        self._sort_stop.clear()
+        self.sort_btn.configure(text="⏹ Отмена")
+
+        threading.Thread(
+            target=self._do_sorting,
+            args=(folder, unsorted_files),
+            daemon=True
+        ).start()
+
+    def _do_sorting(self, folder, files):
+        """Выполняет сортировку."""
+        total = len(files)
+        done = 0
+
+        # Создаём анализатор
+        cfg = Config()
+        az = Analyzer(cfg, require_bodycam=False)
+
+        for fp in files:
+            if self._sort_stop.is_set():
+                break
+
+            try:
+                result = az.run(fp, wd=False)
+
+                if result.ok:
+                    # Определяем папку
+                    dest_folder = Path(folder) / result.folder
+                    dest_folder.mkdir(parents=True, exist_ok=True)
+
+                    # Перемещаем
+                    dest = dest_folder / fp.name
+                    n = 1
+                    while dest.exists():
+                        dest = dest_folder / f"{fp.stem}_{n}{fp.suffix}"
+                        n += 1
+
+                    shutil.move(str(fp), str(dest))
+
+            except Exception as e:
+                print(f"[OVERLAY] Ошибка сортировки {fp.name}: {e}")
+
+            done += 1
+            progress = done / total
+
+            self.after(0, lambda p=progress, d=done, t=total:
+            self._update_sort_progress(p, d, t))
+
+        self.after(0, self._sorting_done)
+
+    def _update_sort_progress(self, progress, done, total):
+        """Обновляет прогресс сортировки."""
+        self.sort_progress.set(progress)
+        self.sort_status.configure(text=f"{done}/{total}")
+
+    def _sorting_done(self):
+        """Завершение сортировки."""
+        self._sorting = False
+        self.sort_btn.configure(text="🔄 Сортировать")
+        self.sort_status.configure(text="✅ Готово!")
+        self._add_to_log("✅ Сортировка завершена")
+
+        # Звук
+        try:
+            if winsound:
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        except:
+            pass
+
+        # Уведомление если скрыт
+        if not self._is_visible and PLYER_OK:
+            try:
+                _notify.notify(
+                    title="Сортировка завершена",
+                    message="Все скрины рассортированы!",
+                    timeout=3
+                )
+            except:
+                pass
+
+    def _register_hotkeys(self):
+        """Регистрирует горячие клавиши."""
+        if not KEYBOARD_OK:
+            return
+
+        try:
+            # Очищаем старые
+            for hk_id in self._hotkey_ids:
+                try:
+                    keyboard.remove_hotkey(hk_id)
+                except:
+                    pass
+            self._hotkey_ids = []
+
+            # Регистрируем новые
+            hk1 = keyboard.add_hotkey(
+                self.hotkeys.get("toggle_overlay", "ctrl+alt"),
+                self._toggle_visibility
+            )
+            self._hotkey_ids.append(hk1)
+
+            hk2 = keyboard.add_hotkey(
+                self.hotkeys.get("screenshot", "f6"),
+                self._take_screenshot
+            )
+            self._hotkey_ids.append(hk2)
+
+            hk3 = keyboard.add_hotkey(
+                self.hotkeys.get("select_hospital", "f7"),
+                self._on_hospital_hotkey
+            )
+            self._hotkey_ids.append(hk3)
+
+        except Exception as e:
+            print(f"[OVERLAY] Ошибка регистрации горячих клавиш: {e}")
+
+    def _on_hospital_hotkey(self):
+        """Обработка горячей клавиши выбора больницы."""
+        if self._is_selecting_hospital:
+            self._is_selecting_hospital = False
+        else:
+            self._is_selecting_hospital = True
+            # Слушаем стрелки
+            keyboard.on_press_key("left", lambda _: self._change_hospital(-1))
+            keyboard.on_press_key("right", lambda _: self._change_hospital(1))
+
+    def _toggle_visibility(self):
+        """Показывает/скрывает оверлей."""
+        if self._is_visible:
+            self.withdraw()
+            self._is_visible = False
+        else:
+            self.deiconify()
+            self._is_visible = True
+
+    def _open_settings(self):
+        """Открывает окно настроек."""
+        OverlaySettingsWindow(self, self.hotkeys, self._on_settings_save)
+
+    def _on_settings_save(self, new_hotkeys, show_close):
+        """Callback сохранения настроек."""
+        self.hotkeys = new_hotkeys
+        self._show_close_btn = show_close
+
+        if show_close:
+            self.close_btn.pack(side="right", padx=(0, 4), pady=4)
+        else:
+            self.close_btn.pack_forget()
+
+        self._register_hotkeys()
+        self._save_settings()
+
+    # ══ Перетаскивание ══
+    def _on_drag_start(self, event):
+        self._drag_data["x"] = event.x
+        self._drag_data["y"] = event.y
+        self._drag_data["dragging"] = True
+
+    def _on_drag_motion(self, event):
+        if self._drag_data["dragging"]:
+            x = self.winfo_x() + event.x - self._drag_data["x"]
+            y = self.winfo_y() + event.y - self._drag_data["y"]
+            self.geometry(f"+{x}+{y}")
+
+    def _on_drag_end(self, event):
+        self._drag_data["dragging"] = False
+        self._save_settings()
+
+    def _on_close(self):
+        """Закрытие оверлея."""
+        # Убираем горячие клавиши
+        if KEYBOARD_OK:
+            for hk_id in self._hotkey_ids:
+                try:
+                    keyboard.remove_hotkey(hk_id)
+                except:
+                    pass
+
+        self._save_settings()
+        self.destroy()
+
+        # Обновляем статус в основном приложении
+        if hasattr(self.parent, '_overlay_closed'):
+            self.parent._overlay_closed()
+
+        self.log_fn("  📸 Оверлей закрыт", "info")
+
+    def reset_counters(self):
+        """Сбрасывает счётчики."""
+        self.counters = {"TAB": 0, "VAC": 0, "PMP": 0}
+        self._update_counters_display()
+        self._save_settings()
+
+
+class OverlaySettingsWindow(ctk.CTkToplevel):
+    """Окно настроек оверлея."""
+
+    def __init__(self, parent, hotkeys, save_callback):
+        super().__init__(parent)
+
+        self.parent = parent
+        self.hotkeys = hotkeys.copy()
+        self.save_callback = save_callback
+        self._recording_key = None
+        self._recording_button = None
+
+        self.title("Настройки оверлея")
+        self.configure(fg_color=P["bg"])
+        self.transient(parent)
+        self.grab_set()
+
+        # Размеры окна с возможностью изменения
+        self.geometry("450x550")
+        self.minsize(400, 450)
+        self.resizable(True, True)  # Можно менять размер
+
+        self._build()
+
+    def _build(self):
+        # Основной скроллируемый контейнер
+        main_scroll = ctk.CTkScrollableFrame(
+            self, fg_color="transparent",
+            scrollbar_button_color=P["border"],
+            scrollbar_button_hover_color=P["accent"]
+        )
+        main_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Заголовок
+        ctk.CTkLabel(
+            main_scroll, text="⚙️ Настройки оверлея",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=P["accent"]
+        ).pack(pady=(0, 16))
+
+        # ══ Горячие клавиши ══
+        hk_frame = ctk.CTkFrame(main_scroll, fg_color=P["card"], corner_radius=10)
+        hk_frame.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(
+            hk_frame, text="⌨️ Горячие клавиши",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=P["text"]
+        ).pack(anchor="w", padx=12, pady=(12, 4))
+
+        ctk.CTkLabel(
+            hk_frame, text="Нажмите кнопку и введите комбинацию клавиш",
+            font=ctk.CTkFont(size=9),
+            text_color=P["dim"]
+        ).pack(anchor="w", padx=12, pady=(0, 8))
+
+        self.hk_buttons = {}
+        hk_labels = {
+            "toggle_overlay": "Показать/скрыть оверлей",
+            "screenshot": "Сделать скриншот",
+            "select_hospital": "Выбор больницы"
+        }
+
+        for key, label in hk_labels.items():
+            row = ctk.CTkFrame(hk_frame, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=4)
+
+            ctk.CTkLabel(
+                row, text=label,
+                font=ctk.CTkFont(size=11),
+                text_color=P["t2"], width=180, anchor="w"
+            ).pack(side="left")
+
+            current_value = self.hotkeys.get(key, "не назначено")
+
+            btn = ctk.CTkButton(
+                row, text=current_value.upper() if current_value else "Нажмите...",
+                width=140, height=32,
+                fg_color=P["entry"], hover_color=P["bh"],
+                border_width=1, border_color=P["border"],
+                text_color=P["text"], font=ctk.CTkFont(size=10),
+                command=lambda k=key: self._start_recording(k)
+            )
+            btn.pack(side="right")
+            self.hk_buttons[key] = btn
+
+        # Кнопка сброса горячих клавиш
+        ctk.CTkButton(
+            hk_frame, text="🔄 Сбросить по умолчанию",
+            height=28,
+            fg_color=P["entry"], hover_color=P["bh"],
+            border_width=1, border_color=P["border"],
+            text_color=P["dim"], font=ctk.CTkFont(size=9),
+            command=self._reset_hotkeys
+        ).pack(fill="x", padx=12, pady=(8, 12))
+
+        # ══ Папка для сортировки ══
+        folder_frame = ctk.CTkFrame(main_scroll, fg_color=P["card"], corner_radius=10)
+        folder_frame.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(
+            folder_frame, text="📁 Папка для сортировки",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=P["text"]
+        ).pack(anchor="w", padx=12, pady=(12, 4))
+
+        ctk.CTkLabel(
+            folder_frame, text="Куда будут сохраняться отсортированные скрины",
+            font=ctk.CTkFont(size=9),
+            text_color=P["dim"]
+        ).pack(anchor="w", padx=12, pady=(0, 8))
+
+        folder_row = ctk.CTkFrame(folder_frame, fg_color="transparent")
+        folder_row.pack(fill="x", padx=12, pady=(0, 12))
+
+        self.sort_folder_entry = ctk.CTkEntry(
+            folder_row, height=32,
+            fg_color=P["entry"], border_color=P["border"],
+            text_color=P["text"], font=ctk.CTkFont(size=10),
+            placeholder_text="Папка для сортировки..."
+        )
+        self.sort_folder_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        # Заполняем текущее значение
+        current_folder = getattr(self.parent, 'screenshot_folder', '')
+        if current_folder:
+            self.sort_folder_entry.insert(0, current_folder)
+
+        ctk.CTkButton(
+            folder_row, text="📂", width=40, height=32,
+            fg_color=P["entry"], hover_color=P["bh"],
+            border_width=1, border_color=P["border"],
+            text_color=P["text"], font=ctk.CTkFont(size=14),
+            command=self._select_sort_folder
+        ).pack(side="right")
+
+        # ══ Внешний вид ══
+        appearance_frame = ctk.CTkFrame(main_scroll, fg_color=P["card"], corner_radius=10)
+        appearance_frame.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(
+            appearance_frame, text="🎨 Внешний вид",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=P["text"]
+        ).pack(anchor="w", padx=12, pady=(12, 8))
+
+        # Прозрачность
+        opacity_row = ctk.CTkFrame(appearance_frame, fg_color="transparent")
+        opacity_row.pack(fill="x", padx=12, pady=(0, 4))
+
+        ctk.CTkLabel(
+            opacity_row, text="Прозрачность:",
+            font=ctk.CTkFont(size=11),
+            text_color=P["t2"]
+        ).pack(side="left")
+
+        self.opacity_value_label = ctk.CTkLabel(
+            opacity_row, text=f"{int(self.parent.attributes('-alpha') * 100)}%",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=P["accent"]
+        )
+        self.opacity_value_label.pack(side="right")
+
+        self.opacity_slider = ctk.CTkSlider(
+            appearance_frame, from_=0.3, to=1.0,
+            progress_color=P["accent"],
+            button_color=P["text"],
+            button_hover_color=P["accent"]
+        )
+        self.opacity_slider.pack(fill="x", padx=12, pady=(0, 12))
+        self.opacity_slider.set(self.parent.attributes("-alpha"))
+        self.opacity_slider.configure(command=self._on_opacity_change)
+
+        # Кнопка закрытия
+        close_row = ctk.CTkFrame(appearance_frame, fg_color="transparent")
+        close_row.pack(fill="x", padx=12, pady=(0, 12))
+
+        ctk.CTkLabel(
+            close_row, text="Показать кнопку закрытия (X):",
+            font=ctk.CTkFont(size=11),
+            text_color=P["t2"]
+        ).pack(side="left")
+
+        self.close_switch = ctk.CTkSwitch(
+            close_row, text="", width=46, height=22,
+            progress_color=P["accent"],
+            button_color=P["text"]
+        )
+        self.close_switch.pack(side="right")
+
+        if getattr(self.parent, '_show_close_btn', False):
+            self.close_switch.select()
+
+        # ══ Формат имени файла ══
+        filename_frame = ctk.CTkFrame(main_scroll, fg_color=P["card"], corner_radius=10)
+        filename_frame.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(
+            filename_frame, text="📝 Формат имени файла",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=P["text"]
+        ).pack(anchor="w", padx=12, pady=(12, 8))
+
+        self.filename_format_var = ctk.StringVar(
+            value=getattr(self.parent, '_filename_format', 'category')
+        )
+
+        formats = [
+            ("category", "По категории: TAB_ELSH_День_15.01.2024_14-30-52.png"),
+            ("date", "По дате: 15.01.2024_14-30-52.png"),
+            ("time", "Только время: 14-30-52.png")
+        ]
+
+        for value, text in formats:
+            ctk.CTkRadioButton(
+                filename_frame, text=text,
+                variable=self.filename_format_var, value=value,
+                font=ctk.CTkFont(size=10),
+                text_color=P["t2"],
+                fg_color=P["accent"],
+                hover_color=P["ah"]
+            ).pack(anchor="w", padx=16, pady=2)
+
+        ctk.CTkFrame(filename_frame, height=8, fg_color="transparent").pack()
+
+        # ══ Кнопки ══
+        btn_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=(8, 0))
+
+        ctk.CTkButton(
+            btn_frame, text="Отмена", height=40,
+            fg_color=P["entry"], hover_color=P["bh"],
+            border_width=1, border_color=P["border"],
+            text_color=P["t2"], font=ctk.CTkFont(size=12),
+            command=self.destroy
+        ).pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        ctk.CTkButton(
+            btn_frame, text="✅ Сохранить", height=40,
+            fg_color=P["accent"], hover_color=P["ah"],
+            text_color="#fff", font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._save
+        ).pack(side="right", fill="x", expand=True, padx=(6, 0))
+
+    def _select_sort_folder(self):
+        """Выбор папки для сортировки."""
+        folder = filedialog.askdirectory(title="Выберите папку для сортировки скринов")
+        if folder:
+            self.sort_folder_entry.delete(0, END)
+            self.sort_folder_entry.insert(0, folder)
+
+    def _start_recording(self, key):
+        """Начинает запись горячей клавиши."""
+        if not KEYBOARD_OK:
+            return
+
+        # Сбрасываем предыдущую запись
+        if self._recording_button:
+            old_key = self._recording_key
+            old_val = self.hotkeys.get(old_key, "не назначено")
+            self._recording_button.configure(
+                text=old_val.upper() if old_val else "Нажмите...",
+                fg_color=P["entry"]
+            )
+
+        self._recording_key = key
+        self._recording_button = self.hk_buttons[key]
+        self._recording_button.configure(
+            text="⏺ Нажмите клавиши...",
+            fg_color=P["orange"]
+        )
+
+        # Записываем нажатие
+        self._recorded_keys = []
+
+        def on_key(event):
+            if event.event_type == 'down':
+                key_name = event.name.lower()
+
+                # Пропускаем модификаторы в отдельности
+                if key_name in ['ctrl', 'alt', 'shift', 'left ctrl', 'right ctrl',
+                                'left alt', 'right alt', 'left shift', 'right shift']:
+                    if key_name not in self._recorded_keys:
+                        if 'left ' in key_name or 'right ' in key_name:
+                            key_name = key_name.split(' ')[1]  # left ctrl -> ctrl
+                        self._recorded_keys.append(key_name)
+                else:
+                    # Основная клавиша
+                    self._recorded_keys.append(key_name)
+                    self._finish_recording()
+                    return False  # Останавливаем запись
+
+        keyboard.hook(on_key)
+
+        # Таймаут на запись
+        self.after(5000, self._cancel_recording)
+
+    def _finish_recording(self):
+        """Завершает запись горячей клавиши."""
+        if not self._recording_key:
+            return
+
+        keyboard.unhook_all()
+
+        if self._recorded_keys:
+            # Формируем комбинацию
+            combo = '+'.join(self._recorded_keys)
+            self.hotkeys[self._recording_key] = combo
+            self._recording_button.configure(
+                text=combo.upper(),
+                fg_color=P["accent"]
+            )
+        else:
+            self._recording_button.configure(
+                text="Нажмите...",
+                fg_color=P["entry"]
+            )
+
+        self._recording_key = None
+        self._recording_button = None
+        self._recorded_keys = []
+
+        # Возвращаем нормальный цвет через секунду
+        self.after(1000, self._reset_button_colors)
+
+    def _cancel_recording(self):
+        """Отменяет запись по таймауту."""
+        if self._recording_key:
+            keyboard.unhook_all()
+            old_val = self.hotkeys.get(self._recording_key, "не назначено")
+            self._recording_button.configure(
+                text=old_val.upper() if old_val else "Нажмите...",
+                fg_color=P["entry"]
+            )
+            self._recording_key = None
+            self._recording_button = None
+
+    def _reset_button_colors(self):
+        """Сбрасывает цвета кнопок."""
+        for btn in self.hk_buttons.values():
+            btn.configure(fg_color=P["entry"])
+
+    def _reset_hotkeys(self):
+        """Сбрасывает горячие клавиши по умолчанию."""
+        defaults = {
+            "toggle_overlay": "ctrl+alt",
+            "screenshot": "f6",
+            "select_hospital": "f7"
+        }
+        self.hotkeys = defaults.copy()
+
+        for key, btn in self.hk_buttons.items():
+            btn.configure(text=defaults[key].upper())
+
+    def _on_opacity_change(self, value):
+        """Обработчик изменения прозрачности."""
+        self.parent.attributes("-alpha", value)
+        self.opacity_value_label.configure(text=f"{int(value * 100)}%")
+
+    def _save(self):
+        """Сохраняет настройки."""
+        show_close = self.close_switch.get()
+
+        # Сохраняем папку
+        sort_folder = self.sort_folder_entry.get().strip()
+        if sort_folder:
+            self.parent.screenshot_folder = sort_folder
+            self.parent.folder_entry.delete(0, END)
+            self.parent.folder_entry.insert(0, sort_folder)
+
+        # Сохраняем формат имени файла
+        self.parent._filename_format = self.filename_format_var.get()
+
+        self.save_callback(self.hotkeys, show_close)
+        self.destroy()
+# ═══════════════════════════════════════════
 #  ГЛАВНОЕ ОКНО
 # ═══════════════════════════════════════════
 class App(ctk.CTk):
@@ -3324,7 +4377,7 @@ class App(ctk.CTk):
             pass
         s.cfg = Config();
         s.cfg.load_thresholds()
-        s.is_pro = _check_license()
+        s.is_pro = False
         s.location_db = load_location_db()
         s.trigger_db = load_trigger_db()
         s.az = Analyzer(s.cfg, require_bodycam=True,
@@ -3338,10 +4391,14 @@ class App(ctk.CTk):
         s.bc_var = ctk.BooleanVar(value=True);
         s._pf = FilePreloader()
         s._settings = load_settings()
+        s._overlay = None
         s._build()
-        s._restore_settings()
         s._setup_log()
+        s._restore_settings()
         threading.Thread(target=lambda: _ocr.init(s._log), daemon=True).start()
+        if s._overlay and s._overlay.winfo_exists():
+            s._overlay.reset_counters()
+            s._overlay._on_close()
         s.protocol("WM_DELETE_WINDOW", s._on_close)
         threading.Thread(target=s._check_updates_background, daemon=True).start()
 
@@ -3398,114 +4455,10 @@ class App(ctk.CTk):
             s._log(f"  ❌ Ошибка отмены: {e}", "error")
 
     def _activate_pro(s):
-        dialog = ctk.CTkToplevel(s)
-        dialog.title("Активация PRO")
-        dialog.configure(fg_color=P["bg"])
-        dialog.transient(s)
-        dialog.grab_set()
-
-        sw, sh = dialog.winfo_screenwidth(), dialog.winfo_screenheight()
-        dialog.geometry(f"450x240+{(sw - 450) // 2}+{(sh - 240) // 2}")
-        dialog.resizable(False, False)
-
-        ctk.CTkLabel(dialog, text="🔑 Активация PRO версии",
-                     font=ctk.CTkFont(size=16, weight="bold"),
-                     text_color=P["gold"]).pack(pady=(20, 10))
-
-        ctk.CTkLabel(dialog, text="Введите ключ активации (формат: MJ-XXXX-XXXX-XXXX)",
-                     font=ctk.CTkFont(size=10),
-                     text_color=P["t2"]).pack(pady=(0, 10))
-
-        key_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        key_frame.pack(fill="x", padx=20, pady=(0, 5))
-
-        show_key = ctk.BooleanVar(value=False)
-
-        key_entry = ctk.CTkEntry(key_frame, height=40,
-                                 font=ctk.CTkFont(size=14, family="Consolas"),
-                                 fg_color=P["entry"], border_color=P["border"],
-                                 text_color=P["text"], placeholder_text="MJ-XXXX-XXXX-XXXX",
-                                 show="●")
-        key_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
-
-        def paste_key():
-            try:
-                clipboard = dialog.clipboard_get()
-                key_entry.delete(0, END)
-                key_entry.insert(0, clipboard.strip())
-            except Exception:
-                pass
-
-        def toggle_show():
-            if show_key.get():
-                key_entry.configure(show="")
-                show_btn.configure(text="🙈")
-            else:
-                key_entry.configure(show="●")
-                show_btn.configure(text="👁")
-            show_key.set(not show_key.get())
-
-        ctk.CTkButton(key_frame, text="📋", width=40, height=40,
-                      fg_color=P["accent"], hover_color=P["ah"],
-                      text_color="#fff", font=ctk.CTkFont(size=16),
-                      command=paste_key).pack(side="left", padx=(0, 5))
-        Tooltip(key_frame.winfo_children()[-1], "Вставить из буфера обмена")
-
-        show_btn = ctk.CTkButton(key_frame, text="👁", width=40, height=40,
-                                 fg_color=P["entry"], hover_color=P["bh"],
-                                 border_width=1, border_color=P["border"],
-                                 text_color=P["text"], font=ctk.CTkFont(size=16),
-                                 command=toggle_show)
-        show_btn.pack(side="left")
-        Tooltip(show_btn, "Показать/скрыть ключ")
-
-        key_entry.bind("<Control-v>", lambda e: (paste_key(), "break")[1])
-        key_entry.bind("<Control-V>", lambda e: (paste_key(), "break")[1])
-
-        status_label = ctk.CTkLabel(dialog, text="",
-                                    font=ctk.CTkFont(size=10),
-                                    text_color=P["dim"])
-        status_label.pack(pady=(5, 10))
-
-        def do_activate():
-            key = key_entry.get().strip().upper()
-            if not key:
-                status_label.configure(text="❌ Введите ключ", text_color=P["err"])
-                return
-            if not key.startswith("MJ-"):
-                status_label.configure(text="❌ Ключ должен начинаться с MJ-", text_color=P["err"])
-                return
-
-            data = {"key": key}
-            LICENSE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-            if _check_license():
-                s.is_pro = True
-                status_label.configure(text="✅ PRO активирован!", text_color=P["ok"])
-                s._log("  🔑 PRO активирован! Перезапустите программу", "success")
-                _play_done_sound()
-                dialog.after(1500, dialog.destroy)
-            else:
-                status_label.configure(text="❌ Ключ недействителен", text_color=P["err"])
-                s._log("  ❌ Ключ недействителен", "error")
-
-        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=20)
-
-        ctk.CTkButton(btn_frame, text="Отмена", height=36,
-                      fg_color=P["entry"], hover_color=P["bh"],
-                      border_width=1, border_color=P["border"],
-                      text_color=P["t2"], font=ctk.CTkFont(size=11),
-                      command=dialog.destroy).pack(side="left", fill="x", expand=True, padx=(0, 5))
-
-        ctk.CTkButton(btn_frame, text="✅ Активировать", height=36,
-                      fg_color=P["gold"], hover_color="#FFE033",
-                      text_color="#1a1a1a", font=ctk.CTkFont(size=11, weight="bold"),
-                      command=do_activate).pack(side="right", fill="x", expand=True, padx=(5, 0))
-
-        key_entry.bind("<Return>", lambda e: do_activate())
-
-        key_entry.focus_set()
+        s._log("", "default")
+        s._log("  💎 PRO версия доступна для покупки", "gold")
+        s._log("  💰 https://www.donationalerts.com/r/orange91323", "accent")
+        webbrowser.open("https://www.donationalerts.com/r/orange91323")
 
     def _setup_log(s):
         (DATA_DIR / "logs").mkdir(exist_ok=True)
@@ -3513,7 +4466,8 @@ class App(ctk.CTk):
         tm = {"info": "info", "success": "success", "warning": "warning",
               "error": "error", "debug": "dim"}
 
-        def sink(m): s._log(m.record["message"], tm.get(m.record["level"].name.lower(), "default"))
+        def sink(m):
+            s._log(m.record["message"], tm.get(m.record["level"].name.lower(), "default"))
 
         logger.add(sink, level="INFO")
         logger.add(DATA_DIR / "logs" / "sorter.log", level="DEBUG", rotation="10 MB", encoding="utf-8")
@@ -3521,7 +4475,8 @@ class App(ctk.CTk):
     def _log(s, msg, lv="default"):
         def _i():
             s.log_t.insert(END, msg + "\n", lv)
-            if s._as.get(): s.log_t.see(END)
+            if s._as.get():
+                s.log_t.see(END)
 
         if threading.current_thread() is threading.main_thread():
             _i()
@@ -3597,10 +4552,11 @@ class App(ctk.CTk):
                           fg_color=P["entry"], button_color=P["blue"],
                           dropdown_fg_color=P["card"], text_color=P["text"],
                           font=ctk.CTkFont(size=10)).pack(side="right")
-        ctk.CTkButton(of, text="🔑 Активировать PRO", height=28,
+        ctk.CTkButton(of, text="💰 Купить PRO версию", height=28,
                       fg_color=P["gold"], hover_color="#FFE033",
                       text_color="#1a1a1a", font=ctk.CTkFont(size=10),
-                      command=s._activate_pro).pack(fill="x", pady=(4, 0))
+                      command=lambda: webbrowser.open("https://www.donationalerts.com/r/orange91323")).pack(fill="x",
+                                                                                                            pady=(4, 0))
         ctk.CTkButton(
             of,
             text="🔄 Проверить обновления",
@@ -3660,7 +4616,44 @@ class App(ctk.CTk):
                          font=ctk.CTkFont(size=8), text_color=P["dim"],
                          wraplength=380, justify="left").pack(anchor="w", padx=4)
 
+            # Оверлей скриншотера
+            overlay_frame = ctk.CTkFrame(ab, fg_color=P["entry"], corner_radius=8,
+                                         border_width=1, border_color=P["border"])
+            overlay_frame.pack(fill="x", pady=(6, 4))
+
+            ctk.CTkLabel(
+                overlay_frame, text="📸 Оверлей скриншотера",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=P["gold"]
+            ).pack(padx=8, pady=(6, 2), anchor="w")
+
+            ctk.CTkLabel(
+                overlay_frame, text="Быстрые скрины поверх игры с автосортировкой",
+                font=ctk.CTkFont(size=8),
+                text_color=P["dim"]
+            ).pack(padx=8, anchor="w")
+
+            s._overlay_btn = ctk.CTkButton(
+                overlay_frame, text="📸 Запустить оверлей",
+                height=36,
+                fg_color=P["accent"], hover_color=P["ah"],
+                text_color="#fff",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                command=s._start_overlay
+            )
+            s._overlay_btn.pack(fill="x", padx=8, pady=4)
+
+            s._overlay_status = ctk.CTkLabel(
+                overlay_frame, text="Оверлей: ⭕ Остановлен",
+                font=ctk.CTkFont(size=9),
+                text_color=P["dim"]
+            )
+            s._overlay_status.pack(padx=8, pady=(0, 6))
+
+            s.db_info = ctk.CTkLabel(ab, text="", font=ctk.CTkFont(size=9), text_color=P["dim"])
+
         s.db_info = ctk.CTkLabel(ab, text="", font=ctk.CTkFont(size=9), text_color=P["dim"])
+        s._overlay_status.pack(padx=8, pady=(0, 6))
         s.db_info.pack(anchor="w", pady=(6, 4));
         s._update_db_info()
         ctk.CTkButton(ab, text="🗑 Сбросить базу знаний", height=28,
@@ -3764,24 +4757,6 @@ class App(ctk.CTk):
                        exportselection=True)
         s.log_t.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
 
-        def _check_updates_manual(self):
-            """Ручная проверка обновлений."""
-            self._log("🔄 Проверка обновлений...", "info")
-
-            def check():
-                has_update, version, url, description = check_for_updates()
-
-                if has_update and url:
-                    self.after(0, lambda: self._show_update_dialog(version, url, description))
-                    self.after(0, lambda: self._log(f"✅ Доступна версия {version}", "success"))
-                elif version:
-                    self.after(0, lambda: self._log(f"✅ У вас последняя версия ({APP_VERSION})", "success"))
-                else:
-                    self.after(0, lambda: self._log("❌ Не удалось проверить обновления", "error"))
-
-            threading.Thread(target=check, daemon=True).start()
-
-
         def _bl(e):
             if e.state & 4 and e.keysym.lower() in ('c', 'a'): return
             if e.keysym in ('Up', 'Down', 'Left', 'Right', 'Home', 'End',
@@ -3837,6 +4812,57 @@ class App(ctk.CTk):
         if not by_loc: lines.append("  (пусто — обучите систему)")
         s.db_info.configure(text="\n".join(lines))
 
+    def _start_overlay(s):
+        """Запускает оверлей скриншотера."""
+        if s._overlay and s._overlay.winfo_exists():
+            s._log("  📸 Оверлей уже запущен", "warning")
+            s._overlay.deiconify()
+            s._overlay.lift()
+            return
+
+        s._overlay = ScreenshotOverlay(s, s._log)
+        s._overlay_btn.configure(
+            text="⏹ Остановить оверлей",
+            fg_color=P["red"],
+            hover_color=P["rh"],
+            command=s._stop_overlay
+        )
+        s._overlay_status.configure(
+            text="Оверлей: ✅ Запущен",
+            text_color=P["ok"]
+        )
+
+    def _stop_overlay(s):
+        """Останавливает оверлей."""
+        if s._overlay and s._overlay.winfo_exists():
+            s._overlay._on_close()
+
+        s._overlay = None
+        s._overlay_btn.configure(
+            text="📸 Запустить оверлей",
+            fg_color=P["accent"],
+            hover_color=P["ah"],
+            command=s._start_overlay
+        )
+        s._overlay_status.configure(
+            text="Оверлей: ⭕ Остановлен",
+            text_color=P["dim"]
+        )
+
+    def _overlay_closed(s):
+        """Callback когда оверлей закрыт."""
+        s._overlay = None
+        s._overlay_btn.configure(
+            text="📸 Запустить оверлей",
+            fg_color=P["accent"],
+            hover_color=P["ah"],
+            command=s._start_overlay
+        )
+        s._overlay_status.configure(
+            text="Оверлей: ⭕ Остановлен",
+            text_color=P["dim"]
+        )
+
     def _fr(s, p, l, ph, cmd):
         f = ctk.CTkFrame(p, fg_color="transparent");
         f.pack(fill="x", padx=12, pady=3)
@@ -3862,6 +4888,12 @@ class App(ctk.CTk):
         lb = ctk.CTkLabel(f, text=v, font=ctk.CTkFont(size=13, weight="bold"), text_color=c)
         lb.pack(padx=6, pady=(0, 2));
         return lb
+
+    def _ot(s):
+        if _ocr._ok:
+            s.ocr_l.configure(text=_ocr._n, text_color=P["ok"])
+        else:
+            s.after(400, s._ot)
 
     def _ot(s):
         if _ocr._ok:
@@ -3941,10 +4973,8 @@ class App(ctk.CTk):
             s._log("⚠️ База знаний пуста — откройте 'Разметить скриншоты' или 'Пакетное обучение'", "warning")
         s._log("", "default")
 
-        if s.is_pro:
-            s._log("🔑 PRO версия активирована", "gold")
-        else:
-            s._log("💡 Бесплатная версия. PRO: настройки → активация", "dim")
+        s._log("💡 Бесплатная версия", "dim")
+        s._log("💰 PRO версия: https://www.donationalerts.com/r/orange91323", "gold")
 
     def _check_updates_background(s):
         """Проверяет обновления в фоне при запуске."""
@@ -4040,11 +5070,10 @@ class App(ctk.CTk):
     #  НОВЫЕ ОКНА
     # ══════════════════════════════════════
     def _open_label_window(s):
-        if not s.is_pro:
-            s._log("  🔒 Разметка скриншотов доступна в PRO версии", "warning")
-            s._log("  💡 Настройки → Активировать PRO", "gold")
-            return
-        LabelWindow(s, s.cfg, s.az, s.trigger_db, s.location_db, s._log)
+        s._log("", "default")
+        s._log("  🔒 Разметка скриншотов — функция PRO версии", "warning")
+        s._log("  💰 Купить PRO: https://www.donationalerts.com/r/orange91323", "gold")
+        s._log("  📦 Скачать PRO: https://github.com/Orange2-invalide/MadjesticRP_Sorter/releases", "info")
 
     def _open_analytics(s):
         fp = filedialog.askopenfilename(title="Выберите скриншот для анализа",
@@ -4055,80 +5084,30 @@ class App(ctk.CTk):
         AnalyticsWindow(s, Path(fp), az, s._log, s.location_db)
 
     def _open_quick_sort(s):
-        if not s.is_pro:
-            s._log("  🔒 Ручная сортировка с запоминанием доступна в PRO версии", "warning")
-            s._log("  💡 Настройки → Активировать PRO", "gold")
-            return
-        out = s.out_e.get().strip()
-        if not out:
-            s._log("  ⚠️ Сначала укажите выходную папку", "warning");
-            return
-        if s.skipped:
-            files = list(s.skipped)
-        else:
-            d = filedialog.askdirectory(title="Папка со скриншотами для ручной сортировки")
-            if not d: return
-            files = sorted([p for p in Path(d).iterdir()
-                            if p.is_file() and p.suffix.lower() in EXTS])
-            if not files: s._log("  Папка пуста", "warning"); return
-        s._log(f"  ⚡ Быстрая сортировка: {len(files)} файлов", "info")
-        az = Analyzer(s.cfg, require_bodycam=False,
-                      location_db=s.location_db, trigger_db=s.trigger_db)
-        QuickSortWindow(s, files, s.cfg, az, s._log, out, s.location_db, s.trigger_db)
+        s._log("", "default")
+        s._log("  🔒 Ручная сортировка — функция PRO версии", "warning")
+        s._log("  💰 Купить PRO: https://www.donationalerts.com/r/orange91323", "gold")
+        s._log("  📦 Скачать PRO: https://github.com/Orange2-invalide/MadjesticRP_Sorter/releases", "info")
 
     def _open_folder_review(s):
-        if not s.is_pro:
-            s._log("  🔒 Просмотр и исправление доступно в PRO версии", "warning")
-            s._log("  💡 Настройки → Активировать PRO", "gold")
-            return
-        out = s.out_e.get().strip()
-        az = Analyzer(s.cfg, require_bodycam=False,
-                      location_db=s.location_db, trigger_db=s.trigger_db)
-        FolderReviewWindow(s, s.cfg, az, s._log, s.location_db, s.trigger_db,
-                           default_dir=out if out else None)
+        s._log("", "default")
+        s._log("  🔒 Просмотр и исправление — функция PRO версии", "warning")
+        s._log("  💰 Купить PRO: https://www.donationalerts.com/r/orange91323", "gold")
+        s._log("  📦 Скачать PRO: https://github.com/Orange2-invalide/MadjesticRP_Sorter/releases", "info")
 
         def _open_auto_learn(s):
-            if not s.is_pro:
-                s._log("  🔒 Автообучение доступно в PRO версии", "warning")
-                s._log("  💡 Настройки → Активировать PRO", "gold")
-                return
-            AutoLearnWindow(s, s.cfg, s.az, s.location_db, s.trigger_db, s._log)
+            s._log("", "default")
+            s._log("  🔒 Автообучение — функция PRO версии", "warning")
+            s._log("  💰 Купить PRO: https://www.donationalerts.com/r/orange91323", "gold")
 
     # ══════════════════════════════════════
     #  ОБУЧЕНИЕ
     # ══════════════════════════════════════
     def _batch_teach(s):
-        if not s.is_pro:
-            s._log("  🔒 Пакетное обучение доступно в PRO версии", "warning")
-            s._log("  💡 Настройки → Активировать PRO", "gold")
-            return
-        d = filedialog.askdirectory(title="Папка (подпапки = названия локаций: ELSH, Sandy, Paleto)")
-        if not d: return
-        loc_map = {"elsh": "ELSH", "элш": "ELSH", "sandy": "Sandy",
-                   "санди": "Sandy", "paleto": "Paleto", "палето": "Paleto"}
-        threading.Thread(target=s._do_batch_teach, args=(Path(d), loc_map), daemon=True).start()
-
-    def _do_batch_teach(s, folder, loc_map):
-        count = 0
-        az = Analyzer(s.cfg, require_bodycam=False, location_db=s.location_db)
-        for subfolder in folder.iterdir():
-            if not subfolder.is_dir(): continue
-            loc_name = subfolder.name.lower();
-            correct_loc = None
-            for key, val in loc_map.items():
-                if key in loc_name: correct_loc = val; break
-            if not correct_loc:
-                s._log(f"  '{subfolder.name}' — не пойму что за локация (назовите ELSH/Sandy/Paleto)", "warning")
-                continue
-            files = [f for f in subfolder.iterdir() if f.suffix.lower() in EXTS]
-            s._log(f"  {subfolder.name} → {correct_loc}: {len(files)} файлов", "info")
-            for fp in files:
-                feats = az.teach(fp, correct_loc, s._log)
-                if feats: count += 1
-        s._log(f"\n✅ Обучение завершено: {count} примеров добавлено", "success")
-        _play_done_sound()
-        s.after(0, s._update_db_info);
-        s.after(0, s._update_db_label)
+        s._log("", "default")
+        s._log("  🔒 Пакетное обучение — функция PRO версии", "warning")
+        s._log("  💰 Купить PRO: https://www.donationalerts.com/r/orange91323", "gold")
+        s._log("  📦 Скачать PRO: https://github.com/Orange2-invalide/MadjesticRP_Sorter/releases", "info")
 
     def _reset_db(s):
         if LOCATION_DB_FILE.exists(): LOCATION_DB_FILE.unlink()
@@ -4367,2108 +5346,12 @@ class App(ctk.CTk):
             s.kb.configure(state="normal", text=f"Пропущ.({len(s.skipped)})")
 
     def _skp(s):
-        if not s.skipped: return
-        out = s.out_e.get().strip()
-        if out:
-            az = Analyzer(s.cfg, require_bodycam=False,
-                          location_db=s.location_db, trigger_db=s.trigger_db)
-            QuickSortWindow(s, list(s.skipped), s.cfg, az,
-                            s._log, out, s.location_db, s.trigger_db)
-        else:
-            SkipV(s, list(s.skipped), s.cfg, s.az,
-                  s._log, s.bc_var.get(), s.location_db)
-
-
-def _activate_pro(s):
-    dialog = ctk.CTkInputDialog(
-        text="Введите ключ активации\n(формат: MJ-XXXX-XXXX-XXXX)",
-        title="Активация PRO")
-    key = dialog.get_input()
-    if not key: return
-    key = key.strip().upper()
-    if not key.startswith("MJ-") or len(key) != 16:
-        s._log("  ❌ Неверный формат ключа", "error");
-        return
-    data = {"key": key}
-    LICENSE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    if _check_license():
-        s.is_pro = True
-        s._log("  🔑 PRO активирован! Перезапустите программу", "success")
-        _play_done_sound()
-    else:
-        s._log("  ❌ Ключ недействителен", "error")
-
-
-# ═══════════════════════════════════════════
-#  ОКНО ПРОПУЩЕННЫХ
-# ═══════════════════════════════════════════
-class SkipV(ctk.CTkToplevel):
-    def __init__(s, parent, files, cfg, az, log_fn, rbc, location_db):
-        super().__init__(parent);
-        s.title("Пропущенные");
-        s.configure(fg_color=P["bg"])
-        s.transient(parent);
-        s.grab_set()
-        s.files = files;
-        s.idx = 0;
-        s.photo = None;
-        s.cfg = cfg
-        s.az = az;
-        s._log = log_fn;
-        s.rbc = rbc;
-        s.location_db = location_db
-        sw, sh = s.winfo_screenwidth(), s.winfo_screenheight()
-        s.geometry(f"860x650+{(sw - 860) // 2}+{(sh - 650) // 2}")
-        s._b()
-        if files: s._sh(0)
-
-    def _b(s):
-        if not s.files: return
-        s.ifr = ctk.CTkFrame(s, fg_color=P["card"], corner_radius=10)
-        s.ifr.pack(fill="both", expand=True, padx=10, pady=6)
-        s.il = ctk.CTkLabel(s.ifr, text="");
-        s.il.pack(expand=True)
-        s.fn = ctk.CTkLabel(s, text="", font=ctk.CTkFont(family="Consolas", size=9),
-                            text_color=P["t2"], fg_color=P["card"], height=22)
-        s.fn.pack(fill="x", padx=10, pady=(0, 3))
-        tf = ctk.CTkFrame(s, fg_color=P["entry"], corner_radius=8,
-                          border_width=1, border_color=P["border"])
-        tf.pack(fill="x", padx=10, pady=(0, 4))
-        s.tv = ctk.StringVar(value="ELSH")
-        ctk.CTkOptionMenu(tf, values=["ELSH", "Sandy", "Paleto"], variable=s.tv,
-                          width=85, height=28, fg_color=P["bg"], button_color=P["gold"],
-                          dropdown_fg_color=P["card"], text_color=P["text"],
-                          font=ctk.CTkFont(size=10)).pack(side="left", padx=8)
-        ctk.CTkButton(tf, text="Обучить", height=28, width=70,
-                      fg_color=P["accent"], text_color="#fff",
-                      font=ctk.CTkFont(size=10), command=s._te).pack(side="left", padx=4)
-        ctk.CTkButton(tf, text="Аналитика", height=28, width=80,
-                      fg_color=P["purple"], text_color="#fff",
-                      font=ctk.CTkFont(size=10), command=s._analytics).pack(side="left", padx=4)
-        ctk.CTkButton(tf, text="Диагн.", height=28, width=60,
-                      fg_color=P["blue"], text_color="#fff",
-                      font=ctk.CTkFont(size=10), command=s._dg).pack(side="right", padx=8, pady=4)
-        nv = ctk.CTkFrame(s, fg_color="transparent", height=44)
-        nv.pack(fill="x", padx=10, pady=(0, 8))
-        s.pv = ctk.CTkButton(nv, text="<", width=80, height=34, fg_color=P["entry"],
-                             hover_color=P["border"], text_color=P["t2"], corner_radius=8,
-                             command=lambda: s._sh(s.idx - 1));
-        s.pv.pack(side="left")
-        ctk.CTkButton(nv, text="Удал.", width=80, height=34, fg_color=P["red"],
-                      hover_color=P["rh"], text_color="#fff", corner_radius=8,
-                      command=s._dl).pack(side="left", padx=4)
-        s.nv = ctk.CTkButton(nv, text=">", width=80, height=34, fg_color=P["accent"],
-                             hover_color=P["ah"], text_color="#fff", corner_radius=8,
-                             command=lambda: s._sh(s.idx + 1));
-        s.nv.pack(side="right")
-
-    def _sh(s, i):
-        if not s.files: return
-        s.idx = max(0, min(i, len(s.files) - 1));
-        fp = s.files[s.idx]
-        s.fn.configure(text=f"  {s.idx + 1}/{len(s.files)} {fp.name}")
-        try:
-            pil = Image.open(fp);
-            r = min(830 / pil.width, 300 / pil.height)
-            pil = pil.resize((int(pil.width * r), int(pil.height * r)), Image.LANCZOS)
-            s.photo = ImageTk.PhotoImage(pil);
-            s.il.configure(image=s.photo, text="")
-        except:
-            s.il.configure(image=None, text="Ошибка")
-        s.pv.configure(state="normal" if s.idx > 0 else "disabled")
-        s.nv.configure(state="normal" if s.idx < len(s.files) - 1 else "disabled")
-
-    def _te(s):
-        if not s.files: return
-        fp = s.files[s.idx];
-        correct_loc = s.tv.get()
-        feats = s.az.teach(fp, correct_loc, s._log)
-        if feats: s._log(f"  {fp.name} → {correct_loc}: готово", "success")
-
-    def _analytics(s):
-        if not s.files: return
-        AnalyticsWindow(s, s.files[s.idx], s.az, s._log, s.location_db)
-
-    def _dg(s):
-        if not s.files: return
-        fp = s.files[s.idx]
-
-        def _do():
-            r = s.az.run(fp, wd=True)
-            for l in r.diag:
-                if "[признаки]" in l or any(x in l for x in ["[E]", "[S]", "[P]", "[скоры]"]):
-                    s._log(f"  {l}", "accent")
-                elif "[триг]" in l:
-                    s._log(f"  {l}", "info")
-                elif "[бд]" in l:
-                    s._log(f"  {l}", "gold")
-                else:
-                    s._log(f"  {l}", "dim")
-            if r.ok:
-                s._log(f"  {r.cat.value} | {r.hosp.value} | {r.method}", "success")
-            else:
-                s._log(f"  {r.err}", "error")
-
-        threading.Thread(target=_do, daemon=True).start()
-
-    def _dl(s):
-        if not s.files: return
-        try:
-            s.files[s.idx].unlink();
-            s.files.pop(s.idx)
-            if not s.files: s.il.configure(image=None, text="Готово"); return
-            s.idx = min(s.idx, len(s.files) - 1);
-            s._sh(s.idx)
-        except:
-            pass
-
-
-# ═══════════════════════════════════════════
-#  БЫСТРАЯ СОРТИРОВКА
-# ═══════════════════════════════════════════
-class QuickSortWindow(ctk.CTkToplevel):
-
-    def _learn_move(s, fp, cat, loc):
-        """Обучение системы на основе ручной сортировки."""
-        if not PRO_FEATURES:
+        if not s.skipped:
             return
-        try:
-            img = _ld(fp)
-            if img is None:
-                return
-
-            ctx = ImageContext(img, s.cfg)
-            feats = extract_features(ctx)
-
-            # Сохраняем локацию
-            if loc and loc not in ("suburb", "UNK", ""):
-                add_location_sample(s.location_db, feats, loc, fp.name)
-
-            # Сохраняем категорию
-            if cat in ("TAB", "VAC", "PMP"):
-                ocr_texts = []
-                for rx, ry, rw, rh in s.cfg.CHAT_SCAN_ROIS[:1]:
-                    roi = ctx.crop(rx, ry, rw, rh)
-                    if roi is not None:
-                        t, _ = _ocr.read(roi, mc=0.1, mh=3, ml=2)
-                        if t:
-                            ocr_texts.append(t.lower().strip())
-                        break
-                add_trigger_sample(s.trigger_db, fp.name, cat, ocr_texts, feats)
-        except Exception as e:
-            logger.error(f"QuickSort._learn_move: {e}")
-
-    def __init__(s, parent, files, cfg, az, log_fn,
-                 output_dir, location_db, trigger_db):
-        super().__init__(parent)
-        s.title("Быстрая сортировка")
-        s.configure(fg_color=P["bg"])
-        s.transient(parent)
-
-        s.files = list(files)
-        s.idx = 0
-        s.photo = None
-        s.cfg = cfg
-        s.az = az
-        s._log = log_fn
-        s.output_dir = Path(output_dir)
-        s.location_db = location_db
-        s.trigger_db = trigger_db
-        s.sorted_count = {"ELSH": 0, "Sandy": 0, "Paleto": 0,
-                          "PMP_city": 0, "PMP_suburb": 0, "skip": 0}
-
-        sw, sh = s.winfo_screenwidth(), s.winfo_screenheight()
-        s.geometry(f"1000x750+{(sw - 1000) // 2}+{(sh - 750) // 2}")
-
-        s._build()
-        if files:
-            s._show(0)
-
-    def _build(s):
-        hf = ctk.CTkFrame(s, fg_color=P["card"], corner_radius=0, height=50)
-        hf.pack(fill="x");
-        hf.pack_propagate(False)
-        ctk.CTkLabel(hf, text="⚡ Быстрая сортировка",
-                     font=ctk.CTkFont(size=14, weight="bold"),
-                     text_color=P["accent"]).pack(side="left", padx=16)
-        s.count_lbl = ctk.CTkLabel(hf, text="",
-                                   font=ctk.CTkFont(size=10),
-                                   text_color=P["gold"])
-        s.count_lbl.pack(side="right", padx=16)
-
-        s.img_frame = ctk.CTkFrame(s, fg_color=P["card"], corner_radius=10)
-        s.img_frame.pack(fill="both", expand=True, padx=8, pady=4)
-        s.img_lbl = ctk.CTkLabel(s.img_frame, text="")
-        s.img_lbl.pack(expand=True)
-
-        s.fname = ctk.CTkLabel(s, text="",
-                               font=ctk.CTkFont(family="Consolas", size=9),
-                               text_color=P["t2"])
-        s.fname.pack(fill="x", padx=8)
-
-        s.auto_lbl = ctk.CTkLabel(s, text="",
-                                  font=ctk.CTkFont(size=10),
-                                  text_color=P["info"])
-        s.auto_lbl.pack(fill="x", padx=8, pady=2)
-
-        s.prog = ctk.CTkProgressBar(s, height=5,
-                                    progress_color=P["accent"],
-                                    fg_color=P["entry"])
-        s.prog.pack(fill="x", padx=8, pady=2)
-        s.prog.set(0)
-
-        btn_frame = ctk.CTkFrame(s, fg_color=P["entry"],
-                                 corner_radius=10,
-                                 border_width=1,
-                                 border_color=P["border"])
-        btn_frame.pack(fill="x", padx=8, pady=4)
-
-        ctk.CTkLabel(btn_frame, text="Куда отправить?",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color=P["text"]).pack(pady=(8, 4))
-
-        row1 = ctk.CTkFrame(btn_frame, fg_color="transparent")
-        row1.pack(fill="x", padx=8, pady=2)
-        ctk.CTkLabel(row1, text="💊", font=ctk.CTkFont(size=14)).pack(side="left", padx=4)
-        for name, loc, color in [("ELSH", "ELSH", P["accent"]),
-                                 ("Sandy", "Sandy", P["gold"]),
-                                 ("Paleto", "Paleto", P["purple"])]:
-            ctk.CTkButton(
-                row1, text=f"Табл → {name}", height=36,
-                fg_color=color, hover_color=P["bh"],
-                text_color="#fff" if color != P["gold"] else "#1a1a1a",
-                font=ctk.CTkFont(size=10, weight="bold"),
-                corner_radius=8,
-                command=lambda l=loc: s._sort_to("TAB", l)
-            ).pack(side="left", fill="x", expand=True, padx=2)
-
-        row2 = ctk.CTkFrame(btn_frame, fg_color="transparent")
-        row2.pack(fill="x", padx=8, pady=2)
-        ctk.CTkLabel(row2, text="💉", font=ctk.CTkFont(size=14)).pack(side="left", padx=4)
-        for name, loc, color in [("ELSH", "ELSH", P["accent"]),
-                                 ("Sandy", "Sandy", P["gold"]),
-                                 ("Paleto", "Paleto", P["purple"])]:
-            ctk.CTkButton(
-                row2, text=f"Вакц → {name}", height=36,
-                fg_color=color, hover_color=P["bh"],
-                text_color="#fff" if color != P["gold"] else "#1a1a1a",
-                font=ctk.CTkFont(size=10, weight="bold"),
-                corner_radius=8,
-                command=lambda l=loc: s._sort_to("VAC", l)
-            ).pack(side="left", fill="x", expand=True, padx=2)
-
-        row3 = ctk.CTkFrame(btn_frame, fg_color="transparent")
-        row3.pack(fill="x", padx=8, pady=2)
-        ctk.CTkLabel(row3, text="🚑", font=ctk.CTkFont(size=14)).pack(side="left", padx=4)
-        ctk.CTkButton(
-            row3, text="ПМП → Город", height=36,
-            fg_color=P["accent"], hover_color=P["ah"],
-            text_color="#fff", font=ctk.CTkFont(size=10, weight="bold"),
-            corner_radius=8, command=lambda: s._sort_to("PMP", "ELSH")
-        ).pack(side="left", fill="x", expand=True, padx=2)
-        ctk.CTkButton(
-            row3, text="ПМП → Пригород", height=36,
-            fg_color=P["gold"], hover_color="#FFE033",
-            text_color="#1a1a1a", font=ctk.CTkFont(size=10, weight="bold"),
-            corner_radius=8, command=lambda: s._sort_to("PMP", "suburb")
-        ).pack(side="left", fill="x", expand=True, padx=2)
-
-        row4 = ctk.CTkFrame(btn_frame, fg_color="transparent")
-        row4.pack(fill="x", padx=8, pady=(4, 8))
-        ctk.CTkButton(
-            row4, text="⏭ Пропустить", height=30,
-            fg_color=P["entry"], hover_color=P["bh"],
-            border_width=1, border_color=P["border"],
-            text_color=P["warn"], font=ctk.CTkFont(size=10),
-            corner_radius=8, command=s._skip_one
-        ).pack(side="left", fill="x", expand=True, padx=2)
-        ctk.CTkButton(
-            row4, text="🗑 Удалить", height=30,
-            fg_color=P["red"], hover_color=P["rh"],
-            text_color="#fff", font=ctk.CTkFont(size=10),
-            corner_radius=8, command=s._delete_one
-        ).pack(side="left", fill="x", expand=True, padx=2)
-
-        s.bind("1", lambda e: s._sort_to("TAB", "ELSH"))
-        s.bind("2", lambda e: s._sort_to("TAB", "Sandy"))
-        s.bind("3", lambda e: s._sort_to("TAB", "Paleto"))
-        s.bind("4", lambda e: s._sort_to("VAC", "ELSH"))
-        s.bind("5", lambda e: s._sort_to("VAC", "Sandy"))
-        s.bind("6", lambda e: s._sort_to("VAC", "Paleto"))
-        s.bind("7", lambda e: s._sort_to("PMP", "ELSH"))
-        s.bind("8", lambda e: s._sort_to("PMP", "suburb"))
-        s.bind("q", lambda e: s._skip_one())
-        s.bind("<Left>", lambda e: s._show(s.idx - 1))
-        s.bind("<Right>", lambda e: s._skip_one())
-        s.bind("<Delete>", lambda e: s._delete_one())
-
-    def _show(s, idx):
-        if not s.files:
-            s.img_lbl.configure(image=None, text="Все отсортировано!")
-            return
-        s.idx = max(0, min(idx, len(s.files) - 1))
-        fp = s.files[s.idx]
-        total = len(s.files)
-
-        s.fname.configure(text=f"  {s.idx + 1}/{total}  {fp.name}")
-        s.prog.set((s.idx + 1) / total)
-        s.count_lbl.configure(
-            text=" | ".join(f"{k}:{v}" for k, v in s.sorted_count.items() if v > 0)
-        )
-
-        try:
-            pil = Image.open(fp)
-            r = min(960 / pil.width, 420 / pil.height)
-            pil = pil.resize((int(pil.width * r), int(pil.height * r)), Image.LANCZOS)
-            s.photo = ImageTk.PhotoImage(pil)
-            s.img_lbl.configure(image=s.photo, text="")
-        except:
-            s.img_lbl.configure(image=None, text="Ошибка загрузки")
-
-        s.auto_lbl.configure(text="Анализирую...", text_color=P["warn"])
-        threading.Thread(target=s._auto_detect, args=(fp,), daemon=True).start()
-
-    def _auto_detect(s, fp):
-        try:
-            r = s.az.run(fp, wd=False)
-            if r.ok:
-                hint = f"💡 Система думает: {r.cat.value} | {r.hosp.value} ({r.method})"
-                color = P["ok"]
-            else:
-                hint = f"❓ Не удалось определить: {r.err or '?'}"
-                color = P["warn"]
-        except Exception as e:
-            hint = f"Ошибка анализа: {e}"
-            color = P["err"]
-
-        def safe_update():
-            try:
-                if s.winfo_exists():
-                    s.auto_lbl.configure(text=hint, text_color=color)
-            except:
-                pass
-
-        try:
-            s.after(0, safe_update)
-        except:
-            pass
-
-    def _skip_one(s):
-        if not s.files: return
-        s.files.pop(s.idx)
-        if not s.files:
-            s.img_lbl.configure(image=None, text="Все файлы обработаны!")
-            return
-        if s.idx >= len(s.files):
-            s.idx = max(0, len(s.files) - 1)
-        s._show(s.idx)
-
-    def _delete_one(s):
-        if not s.files: return
-        try:
-            s.files[s.idx].unlink()
-        except:
-            pass
-        s.files.pop(s.idx)
-        if not s.files:
-            s.img_lbl.configure(image=None, text="Все файлы обработаны!")
-            return
-        if s.idx >= len(s.files):
-            s.idx = max(0, len(s.files) - 1)
-        s._show(s.idx)
-
-    def _sort_to(s, cat, loc):
-        if not s.files:
-            return
-        fp = s.files[s.idx]
-
-        cat_names = {"TAB": "Таблетки", "VAC": "Вакцины", "PMP": "ПМП"}
-        cat_name = cat_names.get(cat, cat)
-
-        if cat == "PMP":
-            folder_name = "ПМП - Город" if loc == "ELSH" else "ПМП - Пригород"
-        else:
-            loc_names = {"ELSH": "ELSH", "Sandy": "Sandy Shores",
-                         "Paleto": "Paleto Bay"}
-            folder_name = f"{cat_name} - {loc_names.get(loc, loc)}"
-
-        dest_dir = s.output_dir / folder_name
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / fp.name
-        n = 1
-        while dest.exists():
-            dest = dest_dir / f"{fp.stem}_{n}{fp.suffix}"
-            n += 1
-
-        try:
-            shutil.move(str(fp), str(dest))
-        except:
-            try:
-                shutil.copy2(str(fp), str(dest))
-                fp.unlink()
-            except:
-                s._log(f"  ❌ Ошибка перемещения {fp.name}", "error")
-                return
-
-        _play_sort_sound()
-
-        threading.Thread(
-            target=s._learn_move,
-            args=(dest, cat, loc),
-            daemon=True
-        ).start()
-
-        key = f"PMP_{'city' if loc == 'ELSH' else 'suburb'}" \
-            if cat == "PMP" else loc
-        s.sorted_count[key] = s.sorted_count.get(key, 0) + 1
-        s._log(f"  ✅ {fp.name} → {folder_name}", "success")
-
-        s.files.pop(s.idx)
-        if s.idx >= len(s.files):
-            s.idx = max(0, len(s.files) - 1)
-        s._show(s.idx)
-
-
-# ═══════════════════════════════════════════
-#  ПРОСМОТР И ИСПРАВЛЕНИЕ ПАПОК
-# ═══════════════════════════════════════════
-class FolderReviewWindow(ctk.CTkToplevel):
-    def __init__(s, parent, cfg, az, log_fn, location_db, trigger_db, default_dir=None):
-        super().__init__(parent)
-        s.title("Просмотр и исправление")
-        s.configure(fg_color=P["bg"])
-        s.transient(parent)
-
-        s.cfg = cfg;
-        s.az = az;
-        s._log = log_fn
-        s.location_db = location_db;
-        s.trigger_db = trigger_db
-        s.base_dir = None;
-        s.folders = [];
-        s.current_folder = None
-        s.files = [];
-        s.idx = 0;
-        s.photo = None
-
-        sw, sh = s.winfo_screenwidth(), s.winfo_screenheight()
-        w = min(1200, sw - 20)
-        h = sh - 60
-        s.geometry(f"{w}x{h}+{(sw - w) // 2}+0")
-        s._build()
-
-        if default_dir and Path(default_dir).is_dir():
-            s.base_dir = Path(default_dir)
-            s._load_folders()
-
-    def _build(s):
-        hf = ctk.CTkFrame(s, fg_color=P["card"], corner_radius=0, height=50)
-        hf.pack(fill="x");
-        hf.pack_propagate(False)
-        ctk.CTkLabel(hf, text="📂 Просмотр и исправление",
-                     font=ctk.CTkFont(size=14, weight="bold"),
-                     text_color=P["accent"]).pack(side="left", padx=16)
-        ctk.CTkButton(hf, text="Выбрать другую папку", height=32,
-                      fg_color=P["blue"], hover_color="#2563EB",
-                      text_color="#fff", font=ctk.CTkFont(size=10),
-                      command=s._select_base).pack(side="right", padx=16)
-
-        tip = ctk.CTkFrame(s, fg_color=P["entry"], corner_radius=6,
-                           border_width=1, border_color=P["border"])
-        tip.pack(fill="x", padx=8, pady=(4, 2))
-        ctk.CTkLabel(tip,
-                     text="💡 Выберите папку слева → смотрите скрин → "
-                          "если не туда попал нажмите кнопку нужной папки. "
-                          "Система запомнит и будет сортировать лучше.",
-                     font=ctk.CTkFont(size=9), text_color=P["dim"],
-                     wraplength=1060).pack(padx=8, pady=4)
-
-        mn = ctk.CTkFrame(s, fg_color="transparent")
-        mn.pack(fill="both", expand=True, padx=8, pady=6)
-        mn.columnconfigure(0, weight=0, minsize=220)
-        mn.columnconfigure(1, weight=1)
-        mn.rowconfigure(0, weight=1)
-
-        # ══ Левая панель — список папок ══
-        lp = ctk.CTkFrame(mn, fg_color=P["card"], corner_radius=10)
-        lp.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-
-        ctk.CTkLabel(lp, text="Папки с результатами:",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color=P["text"]).pack(padx=8, pady=(8, 4), anchor="w")
-
-        s.folder_frame = ctk.CTkScrollableFrame(lp, fg_color="transparent")
-        s.folder_frame.pack(fill="both", expand=True, padx=4, pady=4)
-
-        # ══ Правая панель — скрин + кнопки ══
-        rp = ctk.CTkFrame(mn, fg_color=P["card"], corner_radius=10)
-        rp.grid(row=0, column=1, sticky="nsew")
-        rp.rowconfigure(1, weight=1)
-        rp.columnconfigure(0, weight=1)
-
-        # Имя файла + прогресс
-        top_f = ctk.CTkFrame(rp, fg_color="transparent")
-        top_f.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 0))
-        top_f.columnconfigure(0, weight=1)
-
-        s.file_lbl = ctk.CTkLabel(top_f, text="",
-                                  font=ctk.CTkFont(family="Consolas", size=9),
-                                  text_color=P["t2"])
-        s.file_lbl.grid(row=0, column=0, sticky="w")
-
-        s.folder_info_lbl = ctk.CTkLabel(top_f, text="",
-                                         font=ctk.CTkFont(size=10, weight="bold"),
-                                         text_color=P["info"])
-        s.folder_info_lbl.grid(row=1, column=0, sticky="w")
-
-        s.prog_bar = ctk.CTkProgressBar(top_f, height=4,
-                                        progress_color=P["accent"],
-                                        fg_color=P["entry"])
-        s.prog_bar.grid(row=2, column=0, sticky="ew", pady=(4, 0))
-        s.prog_bar.set(0)
-
-        # Превью скрина
-        s.img_frame = ctk.CTkFrame(rp, fg_color=P["entry"], corner_radius=8)
-        s.img_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
-        s.img_lbl = ctk.CTkLabel(s.img_frame, text="← Выберите папку слева")
-        s.img_lbl.pack(expand=True)
-
-        # Нижняя панель — кнопки действий
-        bot = ctk.CTkFrame(rp, fg_color="transparent")
-        bot.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
-
-        # Навигация
-        nav = ctk.CTkFrame(bot, fg_color="transparent")
-        nav.pack(fill="x", pady=(0, 4))
-
-        ctk.CTkButton(nav, text="◀ Назад", width=90, height=32,
-                      fg_color=P["entry"], hover_color=P["bh"],
-                      border_width=1, border_color=P["border"],
-                      text_color=P["t2"], corner_radius=8,
-                      command=lambda: s._nav(-1)).pack(side="left")
-
-        s.nav_lbl = ctk.CTkLabel(nav, text="0 / 0",
-                                 font=ctk.CTkFont(size=10),
-                                 text_color=P["dim"])
-        s.nav_lbl.pack(side="left", padx=8)
-
-        ctk.CTkButton(nav, text="✓ Верно, дальше", height=32,
-                      fg_color=P["accent"], hover_color=P["ah"],
-                      text_color="#fff",
-                      font=ctk.CTkFont(size=10, weight="bold"),
-                      corner_radius=8,
-                      command=lambda: s._nav(1)).pack(side="left",
-                                                      fill="x", expand=True, padx=4)
-
-        ctk.CTkButton(nav, text="🗑 Удалить", width=90, height=32,
-                      fg_color=P["red"], hover_color=P["rh"],
-                      text_color="#fff", corner_radius=8,
-                      command=s._delete).pack(side="right")
-
-        # Кнопки перемещения — такие же как в QuickSort
-        move_sec = ctk.CTkFrame(bot, fg_color=P["entry"],
-                                corner_radius=8,
-                                border_width=1,
-                                border_color=P["border"])
-        move_sec.pack(fill="x")
-
-        ctk.CTkLabel(move_sec,
-                     text="Не туда попал? Выбери куда переместить:",
-                     font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=P["text"]).pack(pady=(6, 4))
-
-        # Таблетки
-        row1 = ctk.CTkFrame(move_sec, fg_color="transparent")
-        row1.pack(fill="x", padx=8, pady=2)
-        ctk.CTkLabel(row1, text="💊",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=4)
-        for name, loc, color in [("Табл→ELSH", "ELSH", P["accent"]),
-                                 ("Табл→Sandy", "Sandy", P["gold"]),
-                                 ("Табл→Paleto", "Paleto", P["purple"])]:
-            ctk.CTkButton(
-                row1, text=name, height=32,
-                fg_color=color, hover_color=P["bh"],
-                text_color="#fff" if color != P["gold"] else "#1a1a1a",
-                font=ctk.CTkFont(size=10, weight="bold"),
-                corner_radius=8,
-                command=lambda l=loc: s._move_to_cat("TAB", l)
-            ).pack(side="left", fill="x", expand=True, padx=2)
-
-        # Вакцины
-        row2 = ctk.CTkFrame(move_sec, fg_color="transparent")
-        row2.pack(fill="x", padx=8, pady=2)
-        ctk.CTkLabel(row2, text="💉",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=4)
-        for name, loc, color in [("Вакц→ELSH", "ELSH", P["accent"]),
-                                 ("Вакц→Sandy", "Sandy", P["gold"]),
-                                 ("Вакц→Paleto", "Paleto", P["purple"])]:
-            ctk.CTkButton(
-                row2, text=name, height=32,
-                fg_color=color, hover_color=P["bh"],
-                text_color="#fff" if color != P["gold"] else "#1a1a1a",
-                font=ctk.CTkFont(size=10, weight="bold"),
-                corner_radius=8,
-                command=lambda l=loc: s._move_to_cat("VAC", l)
-            ).pack(side="left", fill="x", expand=True, padx=2)
-
-        # ПМП
-        row3 = ctk.CTkFrame(move_sec, fg_color="transparent")
-        row3.pack(fill="x", padx=8, pady=2)
-        ctk.CTkLabel(row3, text="🚑",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=4)
-        ctk.CTkButton(
-            row3, text="ПМП → Город", height=32,
-            fg_color=P["accent"], hover_color=P["ah"],
-            text_color="#fff",
-            font=ctk.CTkFont(size=10, weight="bold"),
-            corner_radius=8,
-            command=lambda: s._move_to_cat("PMP", "ELSH")
-        ).pack(side="left", fill="x", expand=True, padx=2)
-        ctk.CTkButton(
-            row3, text="ПМП → Пригород", height=32,
-            fg_color=P["gold"], hover_color="#FFE033",
-            text_color="#1a1a1a",
-            font=ctk.CTkFont(size=10, weight="bold"),
-            corner_radius=8,
-            command=lambda: s._move_to_cat("PMP", "suburb")
-        ).pack(side="left", fill="x", expand=True, padx=2)
-
-        ctk.CTkFrame(move_sec, height=1,
-                     fg_color=P["border"]).pack(fill="x", padx=8, pady=4)
-
-        # Произвольные папки (если есть нестандартные)
-        ctk.CTkLabel(move_sec,
-                     text="Или в конкретную папку:",
-                     font=ctk.CTkFont(size=9),
-                     text_color=P["dim"]).pack(anchor="w", padx=8)
-
-        s.move_btns_frame = ctk.CTkScrollableFrame(
-            move_sec, fg_color="transparent", height=60)
-        s.move_btns_frame.pack(fill="x", padx=8, pady=(0, 8))
-
-        # Горячие клавиши
-        s.bind("1", lambda e: s._move_to_cat("TAB", "ELSH"))
-        s.bind("2", lambda e: s._move_to_cat("TAB", "Sandy"))
-        s.bind("3", lambda e: s._move_to_cat("TAB", "Paleto"))
-        s.bind("4", lambda e: s._move_to_cat("VAC", "ELSH"))
-        s.bind("5", lambda e: s._move_to_cat("VAC", "Sandy"))
-        s.bind("6", lambda e: s._move_to_cat("VAC", "Paleto"))
-        s.bind("7", lambda e: s._move_to_cat("PMP", "ELSH"))
-        s.bind("8", lambda e: s._move_to_cat("PMP", "suburb"))
-        s.bind("<Right>", lambda e: s._nav(1))
-        s.bind("<Left>", lambda e: s._nav(-1))
-        s.bind("<Delete>", lambda e: s._delete())
-
-    def _select_base(s):
-        d = filedialog.askdirectory(title="Папка с результатами сортировки")
-        if not d: return
-        s.base_dir = Path(d)
-        s._load_folders()
-
-    def _load_folders(s):
-        for w in s.folder_frame.winfo_children(): w.destroy()
-        s.folders = sorted([f for f in s.base_dir.iterdir() if f.is_dir()])
-        if not s.folders:
-            ctk.CTkLabel(s.folder_frame, text="Папок нет",
-                         font=ctk.CTkFont(size=10),
-                         text_color=P["dim"]).pack(pady=8)
-            return
-        for folder in s.folders:
-            count = len([f for f in folder.iterdir()
-                         if f.is_file() and f.suffix.lower() in EXTS])
-            color = P["accent"] if count > 0 else P["dim"]
-            ctk.CTkButton(
-                s.folder_frame,
-                text=f"{folder.name}\n({count} скринов)",
-                height=40,
-                fg_color=P["entry"], hover_color=P["bh"],
-                border_width=1, border_color=P["border"],
-                text_color=color,
-                font=ctk.CTkFont(size=9), anchor="w",
-                command=lambda f=folder: s._open_folder(f)
-            ).pack(fill="x", pady=2)
-
-    def _open_folder(s, folder):
-        s.current_folder = folder
-        s.files = sorted([f for f in folder.iterdir()
-                          if f.is_file() and f.suffix.lower() in EXTS])
-        s.idx = 0
-
-        # Обновляем кнопки произвольных папок
-        for w in s.move_btns_frame.winfo_children(): w.destroy()
-        for target in s.folders:
-            if target == folder: continue
-            ctk.CTkButton(
-                s.move_btns_frame,
-                text=f"→ {target.name}",
-                height=24,
-                fg_color=P["entry"], hover_color=P["accent"],
-                border_width=1, border_color=P["border"],
-                text_color=P["t2"], font=ctk.CTkFont(size=8),
-                command=lambda t=target: s._move_to_folder(t)
-            ).pack(fill="x", pady=1)
-
-        s._show_file()
-
-    def _show_file(s):
-        if not s.files:
-            s.img_lbl.configure(image=None, text="✅ В этой папке пусто")
-            s.file_lbl.configure(text="")
-            s.folder_info_lbl.configure(text="")
-            s.nav_lbl.configure(text="0 / 0")
-            s.prog_bar.set(0)
-            return
-
-        s.idx = max(0, min(s.idx, len(s.files) - 1))
-        fp = s.files[s.idx]
-        total = len(s.files)
-
-        s.file_lbl.configure(text=f"  {fp.name}")
-        s.folder_info_lbl.configure(
-            text=f"📁 Папка: {s.current_folder.name}",
-            text_color=P["info"])
-        s.nav_lbl.configure(text=f"{s.idx + 1} / {total}")
-        s.prog_bar.set((s.idx + 1) / total)
-
-        try:
-            pil = Image.open(fp)
-            # Подбираем размер под окно
-            r = min(750 / pil.width, 380 / pil.height)
-            pil = pil.resize((int(pil.width * r),
-                              int(pil.height * r)), Image.LANCZOS)
-            s.photo = ImageTk.PhotoImage(pil)
-            s.img_lbl.configure(image=s.photo, text="")
-        except:
-            s.img_lbl.configure(image=None, text="Ошибка загрузки")
-
-    def _move_to_cat(s, cat, loc):
-        """Перемещение в папку по категории и локации."""
-        if not s.files: return
-        fp = s.files[s.idx]
-
-        cat_names = {"TAB": "Таблетки", "VAC": "Вакцины", "PMP": "ПМП"}
-        cat_name = cat_names.get(cat, cat)
-
-        if cat == "PMP":
-            folder_name = "ПМП - Город" if loc == "ELSH" else "ПМП - Пригород"
-        else:
-            loc_names = {"ELSH": "ELSH", "Sandy": "Sandy Shores",
-                         "Paleto": "Paleto Bay"}
-            folder_name = f"{cat_name} - {loc_names.get(loc, loc)}"
-
-        # Находим или создаём целевую папку
-        target = s.base_dir / folder_name
-        target.mkdir(parents=True, exist_ok=True)
-
-        # Если это та же папка
-        if target == s.current_folder:
-            s._log(f"  ℹ️ Скрин уже в {folder_name}", "dim")
-            s._nav(1);
-            return
-
-        s._do_move(fp, target, cat, loc, folder_name)
-
-    def _move_to_folder(s, target_folder):
-        """Перемещение в конкретную папку."""
-        if not s.files: return
-        fp = s.files[s.idx]
-        s._do_move(fp, target_folder, "", "", target_folder.name)
-
-    def _do_move(s, fp, target, cat, loc, folder_name):
-        """Общая логика перемещения."""
-        dest = target / fp.name
-        n = 1
-        while dest.exists():
-            dest = target / f"{fp.stem}_{n}{fp.suffix}"
-            n += 1
-
-        moved_dest = dest  # сохраняем путь назначения
-
-        try:
-            shutil.move(str(fp), str(moved_dest))
-        except Exception as e:
-            try:
-                shutil.copy2(str(fp), str(moved_dest))
-                fp.unlink()
-            except:
-                s._log(f"  ❌ Ошибка перемещения: {e}", "error")
-                return
-
-        _play_sort_sound()
-
-        s._log(
-            f"  🔄 {fp.name}: {s.current_folder.name} → {folder_name}",
-            "success")
-
-        # Обучение в фоне — передаём moved_dest как Path
-        threading.Thread(
-            target=s._learn_move,
-            args=(moved_dest, cat, loc, folder_name),
-            daemon=True
-        ).start()
-
-        s.files.pop(s.idx)
-        if s.idx >= len(s.files):
-            s.idx = max(0, len(s.files) - 1)
-        s._show_file()
-        s.after(500, s._load_folders)
-
-    def _learn_move(s, fp, cat, loc, folder_name):
-        if not PRO_FEATURES:
-            return
-        """Обучение на основе ручного перемещения."""
-        try:
-            img = _ld(fp)
-            if img is None: return
-            ctx = ImageContext(img, s.cfg)
-            feats = extract_features(ctx)
-
-            # Определяем локацию
-            if loc and loc not in ("suburb", "UNK", ""):
-                learn_loc = loc
-            else:
-                loc_map = {"elsh": "ELSH", "sandy": "Sandy", "paleto": "Paleto"}
-                learn_loc = None
-                fn_lower = folder_name.lower()
-                for key, val in loc_map.items():
-                    if key in fn_lower:
-                        learn_loc = val
-                        break
-
-            if learn_loc and feats:
-                add_location_sample(s.location_db, feats, learn_loc, fp.name)
-
-            # Определяем категорию
-            learn_cat = cat if cat in ("TAB", "VAC", "PMP") else None
-            if not learn_cat:
-                cat_map = {"таблетки": "TAB", "табл": "TAB",
-                           "вакцин": "VAC", "пмп": "PMP"}
-                fn_lower = folder_name.lower()
-                for key, val in cat_map.items():
-                    if key in fn_lower:
-                        learn_cat = val
-                        break
-
-            if learn_cat:
-                ocr_texts = []
-                for rx, ry, rw, rh in s.cfg.CHAT_SCAN_ROIS[:1]:
-                    roi = ctx.crop(rx, ry, rw, rh)
-                    if roi is None:
-                        continue
-                    t, _ = _ocr.read(roi, mc=0.1, mh=3, ml=2)
-                    if t:
-                        ocr_texts.append(t.lower().strip())
-                    break
-                add_trigger_sample(s.trigger_db, fp.name,
-                                   learn_cat, ocr_texts, feats)
-        except Exception as e:
-            logger.error(f"learn_move: {e}")
-
-    def _nav(s, delta):
-        s.idx = max(0, min(s.idx + delta, len(s.files) - 1))
-        s._show_file()
-
-    def _delete(s):
-        if not s.files: return
-        try:
-            s.files[s.idx].unlink()
-        except:
-            pass
-        s.files.pop(s.idx)
-        if s.idx >= len(s.files):
-            s.idx = max(0, len(s.files) - 1)
-        s._show_file()
-
-
-# ═══════════════════════════════════════════
-#  АВТООБУЧЕНИЕ ИЗ ПАПКИ
-# ═══════════════════════════════════════════
-class AutoLearnWindow(ctk.CTkToplevel):
-    def __init__(s, parent, cfg, az, location_db, trigger_db, log_fn):
-        super().__init__(parent)
-        s.title("Автообучение из папки")
-        s.configure(fg_color=P["bg"])
-        s.transient(parent)
-
-        s.cfg = cfg;
-        s.az = az
-        s.location_db = location_db
-        s.trigger_db = trigger_db
-        s.log_fn = log_fn
-
-        s.files = []
-        s.groups = {}  # {loc: [fp, ...]}
-        s.unassigned = []  # скрины которые не удалось определить
-        s.photo = None
-        s.current_group = None
-        s.current_idx = 0
-        s._stop = threading.Event()
-        s._analyzing = False
-
-        sw, sh = s.winfo_screenwidth(), s.winfo_screenheight()
-        s.geometry(f"1200x800+{(sw - 1200) // 2}+{(sh - 800) // 2}")
-        s._build()
-
-    def _build(s):
-        # Шапка
-        hf = ctk.CTkFrame(s, fg_color=P["card"], corner_radius=0, height=55)
-        hf.pack(fill="x");
-        hf.pack_propagate(False)
-        ctk.CTkLabel(hf, text="🤖 Автообучение из папки",
-                     font=ctk.CTkFont(size=15, weight="bold"),
-                     text_color=P["accent"]).pack(side="left", padx=16, pady=14)
-        s.status_lbl = ctk.CTkLabel(hf, text="Выберите папку со скринами",
-                                    font=ctk.CTkFont(size=10),
-                                    text_color=P["gold"])
-        s.status_lbl.pack(side="right", padx=16)
-
-        # Подсказка
-        tip = ctk.CTkFrame(s, fg_color=P["entry"], corner_radius=6,
-                           border_width=1, border_color=P["border"])
-        tip.pack(fill="x", padx=8, pady=(4, 2))
-        ctk.CTkLabel(tip,
-                     text="💡 Как работает: 1) Выбери папку со скринами  "
-                          "2) Программа сама попробует определить больницу по цветам  "
-                          "3) Ты подтверждаешь или исправляешь  "
-                          "4) Система обучается на каждом скрине",
-                     font=ctk.CTkFont(size=9), text_color=P["dim"],
-                     wraplength=1140).pack(padx=8, pady=4)
-
-        mn = ctk.CTkFrame(s, fg_color="transparent")
-        mn.pack(fill="both", expand=True, padx=8, pady=6)
-        mn.columnconfigure(0, weight=0, minsize=280)
-        mn.columnconfigure(1, weight=1)
-        mn.rowconfigure(0, weight=1)
-
-        # ══ Левая панель — управление ══
-        lp = ctk.CTkFrame(mn, fg_color=P["card"], corner_radius=10)
-        lp.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-
-        # Выбор папки и запуск
-        ctk.CTkLabel(lp, text="Шаг 1: Выбери папку",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color=P["accent"]).pack(padx=12, pady=(12, 4), anchor="w")
-
-        s.folder_lbl = ctk.CTkLabel(lp, text="Папка не выбрана",
-                                    font=ctk.CTkFont(size=9),
-                                    text_color=P["dim"], wraplength=240)
-        s.folder_lbl.pack(padx=12, anchor="w")
-
-        ctk.CTkButton(lp, text="📁 Выбрать папку", height=36,
-                      fg_color=P["blue"], hover_color="#2563EB",
-                      text_color="#fff",
-                      font=ctk.CTkFont(size=11, weight="bold"),
-                      command=s._select_folder).pack(fill="x", padx=12, pady=6)
-
-        ctk.CTkFrame(lp, height=1, fg_color=P["border"]).pack(fill="x", padx=8, pady=4)
-
-        ctk.CTkLabel(lp, text="Шаг 2: Анализ",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color=P["accent"]).pack(padx=12, pady=(4, 4), anchor="w")
-
-        s.prog = ctk.CTkProgressBar(lp, height=8,
-                                    progress_color=P["accent"],
-                                    fg_color=P["entry"])
-        s.prog.pack(fill="x", padx=12, pady=(0, 4))
-        s.prog.set(0)
-
-        s.prog_lbl = ctk.CTkLabel(lp, text="",
-                                  font=ctk.CTkFont(size=9),
-                                  text_color=P["dim"])
-        s.prog_lbl.pack(padx=12, anchor="w")
-
-        bf = ctk.CTkFrame(lp, fg_color="transparent")
-        bf.pack(fill="x", padx=12, pady=6)
-        s.run_btn = ctk.CTkButton(bf, text="▶ Запустить анализ", height=36,
-                                  fg_color=P["accent"], hover_color=P["ah"],
-                                  text_color="#fff",
-                                  font=ctk.CTkFont(size=11, weight="bold"),
-                                  command=s._start_analysis, state="disabled")
-        s.run_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        s.stop_btn = ctk.CTkButton(bf, text="⏹", height=36, width=40,
-                                   fg_color=P["red"], hover_color=P["rh"],
-                                   text_color="#fff",
-                                   font=ctk.CTkFont(size=12),
-                                   command=s._stop_analysis, state="disabled")
-        s.stop_btn.pack(side="right")
-
-        ctk.CTkFrame(lp, height=1, fg_color=P["border"]).pack(fill="x", padx=8, pady=4)
-
-        # Результаты по группам
-        ctk.CTkLabel(lp, text="Шаг 3: Подтверди группы",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color=P["accent"]).pack(padx=12, pady=(4, 4), anchor="w")
-
-        s.groups_frame = ctk.CTkScrollableFrame(lp, fg_color="transparent",
-                                                height=200)
-        s.groups_frame.pack(fill="x", padx=8, pady=4)
-
-        ctk.CTkFrame(lp, height=1, fg_color=P["border"]).pack(fill="x", padx=8, pady=4)
-
-        # Сохранить всё
-        s.save_all_btn = ctk.CTkButton(lp, text="💾 Сохранить всё в базу",
-                                       height=40,
-                                       fg_color=P["ok"], hover_color="#1ea870",
-                                       text_color="#fff",
-                                       font=ctk.CTkFont(size=12, weight="bold"),
-                                       command=s._save_all, state="disabled")
-        s.save_all_btn.pack(fill="x", padx=12, pady=6)
-
-        s.save_lbl = ctk.CTkLabel(lp, text="",
-                                  font=ctk.CTkFont(size=9),
-                                  text_color=P["dim"])
-        s.save_lbl.pack(padx=12, pady=(0, 8))
-
-        # ══ Правая панель — просмотр ══
-        rp = ctk.CTkFrame(mn, fg_color=P["card"], corner_radius=10)
-        rp.grid(row=0, column=1, sticky="nsew")
-        rp.rowconfigure(1, weight=1)
-        rp.columnconfigure(0, weight=1)
-
-        # Инфо о текущем скрине
-        info_f = ctk.CTkFrame(rp, fg_color="transparent")
-        info_f.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 0))
-        info_f.columnconfigure(0, weight=1)
-
-        s.img_title = ctk.CTkLabel(info_f, text="",
-                                   font=ctk.CTkFont(size=11, weight="bold"),
-                                   text_color=P["text"])
-        s.img_title.grid(row=0, column=0, sticky="w")
-
-        s.img_sub = ctk.CTkLabel(info_f, text="",
-                                 font=ctk.CTkFont(size=9),
-                                 text_color=P["dim"])
-        s.img_sub.grid(row=1, column=0, sticky="w")
-
-        s.img_nav = ctk.CTkLabel(info_f, text="",
-                                 font=ctk.CTkFont(size=10),
-                                 text_color=P["t2"])
-        s.img_nav.grid(row=0, column=1, sticky="e")
-
-        # Превью
-        s.img_frame = ctk.CTkFrame(rp, fg_color=P["entry"], corner_radius=8)
-        s.img_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
-        s.img_lbl = ctk.CTkLabel(s.img_frame,
-                                 text="После анализа здесь будут скрины")
-        s.img_lbl.pack(expand=True)
-
-        # Навигация внутри группы
-        nav_f = ctk.CTkFrame(rp, fg_color="transparent")
-        nav_f.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
-
-        ctk.CTkButton(nav_f, text="◀", width=60, height=30,
-                      fg_color=P["entry"], hover_color=P["bh"],
-                      text_color=P["t2"], corner_radius=8,
-                      command=lambda: s._nav_img(-1)).pack(side="left")
-
-        s.img_prog = ctk.CTkProgressBar(nav_f, height=4,
-                                        progress_color=P["accent"],
-                                        fg_color=P["entry"])
-        s.img_prog.pack(side="left", fill="x", expand=True, padx=4)
-        s.img_prog.set(0)
-
-        ctk.CTkButton(nav_f, text="▶", width=60, height=30,
-                      fg_color=P["accent"], hover_color=P["ah"],
-                      text_color="#fff", corner_radius=8,
-                      command=lambda: s._nav_img(1)).pack(side="right")
-
-        # Кнопки подтверждения локации
-        confirm_f = ctk.CTkFrame(rp, fg_color=P["entry"],
-                                 corner_radius=8,
-                                 border_width=1,
-                                 border_color=P["border"])
-        confirm_f.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
-
-        ctk.CTkLabel(confirm_f,
-                     text="Где сделан этот скрин?",
-                     font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=P["text"]).pack(pady=(6, 4))
-
-        btn_row = ctk.CTkFrame(confirm_f, fg_color="transparent")
-        btn_row.pack(fill="x", padx=8, pady=(0, 8))
-
-        for text, loc, color in [
-            ("🏥 ELSH", "ELSH", P["accent"]),
-            ("🏜 Sandy", "Sandy", P["gold"]),
-            ("🌊 Paleto", "Paleto", P["purple"]),
-            ("❓ Не знаю", "UNK", P["dim"]),
-        ]:
-            ctk.CTkButton(
-                btn_row, text=text, height=38,
-                fg_color=color, hover_color=P["bh"],
-                text_color="#fff" if color != P["gold"] else "#1a1a1a",
-                font=ctk.CTkFont(size=11, weight="bold"),
-                corner_radius=8,
-                command=lambda l=loc: s._assign_current(l)
-            ).pack(side="left", fill="x", expand=True, padx=2)
-
-        # Горячие клавиши
-        s.bind("1", lambda e: s._assign_current("ELSH"))
-        s.bind("2", lambda e: s._assign_current("Sandy"))
-        s.bind("3", lambda e: s._assign_current("Paleto"))
-        s.bind("4", lambda e: s._assign_current("UNK"))
-        s.bind("<Left>", lambda e: s._nav_img(-1))
-        s.bind("<Right>", lambda e: s._nav_img(1))
-
-    # ══════════════════════════════════════
-    #  ВЫБОР ПАПКИ
-    # ══════════════════════════════════════
-    def _select_folder(s):
-        d = filedialog.askdirectory(title="Папка со скриншотами")
-        if not d: return
-        files = sorted([
-            p for p in Path(d).iterdir()
-            if p.is_file() and p.suffix.lower() in EXTS
-        ])
-        if not files:
-            s.log_fn("  Папка пуста", "warning")
-            return
-        s.files = files
-        s.folder_lbl.configure(
-            text=f"{Path(d).name}\n{len(files)} скринов")
-        s.run_btn.configure(state="normal")
-        s.status_lbl.configure(
-            text=f"Готово к анализу: {len(files)} скринов",
-            text_color=P["ok"])
-
-    # ══════════════════════════════════════
-    #  АНАЛИЗ
-    # ══════════════════════════════════════
-    def _start_analysis(s):
-        if not s.files: return
-        s._stop.clear()
-        s._analyzing = True
-        s.groups = {"ELSH": [], "Sandy": [], "Paleto": [], "UNK": []}
-        s.run_btn.configure(state="disabled")
-        s.stop_btn.configure(state="normal")
-        s.save_all_btn.configure(state="disabled")
-        s.prog.set(0)
-        threading.Thread(target=s._do_analysis, daemon=True).start()
-
-    def _do_analysis(s):
-        total = len(s.files)
-        done = 0
-
-        for fp in s.files:
-            if s._stop.is_set():
-                break
-
-            done += 1
-            progress = done / total
-
-            try:
-                img = _ld(fp)
-                if img is None:
-                    s.groups["UNK"].append({
-                        "fp": fp, "loc": "UNK",
-                        "conf": 0, "feats": {}, "auto": "UNK"
-                    })
-                    continue
-
-                ctx = ImageContext(img, s.cfg)
-                feats = extract_features(ctx)
-
-                # Определяем локацию классическим методом
-                cr = color_analyze_classic(ctx, feats)
-
-                # Также спрашиваем базу знаний
-                db_loc, db_conf, _ = predict_location_from_db(
-                    s.location_db, feats)
-
-                # Выбираем лучший вариант
-                if db_conf >= 0.1 and db_loc != "Unsorted":
-                    auto_loc = db_loc
-                    conf = db_conf
-                elif cr.winner != s.cfg.F_UNK and cr.conf >= 0.01:
-                    loc_map = {
-                        s.cfg.F_ELSH: "ELSH",
-                        s.cfg.F_SANDY: "Sandy",
-                        s.cfg.F_PALETO: "Paleto"
-                    }
-                    auto_loc = loc_map.get(cr.winner, "UNK")
-                    conf = cr.conf
-                else:
-                    auto_loc = "UNK"
-                    conf = 0.0
-
-                entry = {
-                    "fp": fp,
-                    "loc": auto_loc,  # предсказание (можно изменить)
-                    "auto": auto_loc,  # оригинальное предсказание
-                    "conf": conf,
-                    "feats": feats,
-                    "cr_elsh": cr.elsh,
-                    "cr_sandy": cr.sandy,
-                    "cr_paleto": cr.paleto
-                }
-
-                s.groups[auto_loc].append(entry)
-
-            except Exception as e:
-                s.groups["UNK"].append({
-                    "fp": fp, "loc": "UNK",
-                    "conf": 0, "feats": {}, "auto": "UNK"
-                })
-
-            # Обновляем UI
-            p = progress
-            d2 = done
-            s.after(0, lambda p=p, d=d2: s._update_progress(p, d, total))
-
-        s.after(0, s._analysis_done)
-
-    def _update_progress(s, progress, done, total):
-        s.prog.set(progress)
-        s.prog_lbl.configure(
-            text=f"Проанализировано: {done}/{total}")
-
-    def _analysis_done(s):
-        s._analyzing = False
-        s.run_btn.configure(state="normal")
-        s.stop_btn.configure(state="disabled")
-
-        total = sum(len(v) for v in s.groups.values())
-        elsh = len(s.groups.get("ELSH", []))
-        sandy = len(s.groups.get("Sandy", []))
-        paleto = len(s.groups.get("Paleto", []))
-        unk = len(s.groups.get("UNK", []))
-
-        s.status_lbl.configure(
-            text=f"Готово: ELSH={elsh} Sandy={sandy} Paleto={paleto} Не знаю={unk}",
-            text_color=P["ok"])
-        s.prog.set(1.0)
-        s.prog_lbl.configure(text=f"Всего: {total} скринов")
-
-        s._build_groups_ui()
-        s.save_all_btn.configure(state="normal")
-
-        # Показываем первую группу
-        if elsh > 0:
-            s._show_group("ELSH")
-        elif sandy > 0:
-            s._show_group("Sandy")
-        elif paleto > 0:
-            s._show_group("Paleto")
-        elif unk > 0:
-            s._show_group("UNK")
-
-    def _stop_analysis(s):
-        s._stop.set()
-        s.stop_btn.configure(state="disabled")
-
-    # ══════════════════════════════════════
-    #  UI ГРУПП
-    # ══════════════════════════════════════
-    def _build_groups_ui(s):
-        for w in s.groups_frame.winfo_children():
-            w.destroy()
-
-        colors = {
-            "ELSH": P["accent"], "Sandy": P["gold"],
-            "Paleto": P["purple"], "UNK": P["dim"]
-        }
-        icons = {
-            "ELSH": "🏥", "Sandy": "🏜", "Paleto": "🌊", "UNK": "❓"
-        }
-
-        for loc in ["ELSH", "Sandy", "Paleto", "UNK"]:
-            items = s.groups.get(loc, [])
-            if not items: continue
-
-            color = colors[loc]
-            icon = icons[loc]
-
-            btn = ctk.CTkButton(
-                s.groups_frame,
-                text=f"{icon} {loc}: {len(items)} скринов",
-                height=36,
-                fg_color=color if loc != "UNK" else P["entry"],
-                hover_color=P["bh"],
-                border_width=1 if loc == "UNK" else 0,
-                border_color=P["border"],
-                text_color="#fff" if color != P["gold"] else "#1a1a1a",
-                font=ctk.CTkFont(size=10, weight="bold"),
-                corner_radius=8,
-                command=lambda l=loc: s._show_group(l)
-            )
-            btn.pack(fill="x", pady=2)
-
-    def _show_group(s, loc):
-        s.current_group = loc
-        s.current_idx = 0
-        items = s.groups.get(loc, [])
-
-        colors = {"ELSH": P["accent"], "Sandy": P["gold"],
-                  "Paleto": P["purple"], "UNK": P["dim"]}
-        icons = {"ELSH": "🏥", "Sandy": "🏜",
-                 "Paleto": "🌊", "UNK": "❓"}
-
-        s.img_title.configure(
-            text=f"{icons.get(loc, '?')} Группа: {loc}",
-            text_color=colors.get(loc, P["text"]))
-
-        if items:
-            s._show_img(0)
-        else:
-            s.img_lbl.configure(image=None, text="Группа пуста")
-
-    def _show_img(s, idx):
-        items = s.groups.get(s.current_group, [])
-        if not items: return
-
-        s.current_idx = max(0, min(idx, len(items) - 1))
-        item = items[s.current_idx]
-        fp = item["fp"]
-        total = len(items)
-
-        s.img_nav.configure(
-            text=f"{s.current_idx + 1} / {total}")
-        s.img_prog.set((s.current_idx + 1) / total)
-
-        # Показываем уверенность и предсказание
-        conf = item.get("conf", 0)
-        auto = item.get("auto", "?")
-        assigned = item.get("loc", "?")
-
-        if assigned != auto:
-            sub = f"Авто: {auto} → Изменено: {assigned} | {fp.name}"
-        else:
-            sub = f"Авто: {auto} ({conf:.0%}) | {fp.name}"
-
-        s.img_sub.configure(text=sub)
-
-        try:
-            pil = Image.open(fp)
-            r = min(800 / pil.width, 400 / pil.height)
-            pil = pil.resize((int(pil.width * r),
-                              int(pil.height * r)), Image.LANCZOS)
-            s.photo = ImageTk.PhotoImage(pil)
-            s.img_lbl.configure(image=s.photo, text="")
-        except:
-            s.img_lbl.configure(image=None, text="Ошибка загрузки")
-
-    def _nav_img(s, delta):
-        items = s.groups.get(s.current_group, [])
-        if not items: return
-        new_idx = s.current_idx + delta
-        if 0 <= new_idx < len(items):
-            s._show_img(new_idx)
-
-    # ══════════════════════════════════════
-    #  НАЗНАЧЕНИЕ ЛОКАЦИИ
-    # ══════════════════════════════════════
-    def _assign_current(s, loc):
-        """Назначаем локацию текущему скрину и переходим к следующему."""
-        if not s.current_group: return
-        items = s.groups.get(s.current_group, [])
-        if not items: return
-
-        item = items[s.current_idx]
-        old_loc = item["loc"]
-
-        # Если локация изменилась — перемещаем в другую группу
-        if loc != s.current_group:
-            item["loc"] = loc
-            items.pop(s.current_idx)
-            if loc not in s.groups:
-                s.groups[loc] = []
-            s.groups[loc].append(item)
-            s._build_groups_ui()
-
-            s.log_fn(
-                f"  🔄 {item['fp'].name}: {old_loc} → {loc}", "info")
-        else:
-            # Локация та же — просто идём дальше
-            pass
-
-        # Переходим к следующему
-        remaining = s.groups.get(s.current_group, [])
-        if s.current_idx >= len(remaining):
-            s.current_idx = max(0, len(remaining) - 1)
-
-        if remaining:
-            s._show_img(s.current_idx)
-        else:
-            s.img_lbl.configure(image=None,
-                                text=f"✅ Группа {s.current_group} проверена!")
-            s.img_sub.configure(text="")
-            s.img_nav.configure(text="")
-
-    # ══════════════════════════════════════
-    #  СОХРАНЕНИЕ
-    # ══════════════════════════════════════
-    def _save_all(s):
-        """Сохраняем все размеченные скрины в базу."""
-        saved = 0;
-        skipped = 0
-
-        for loc, items in s.groups.items():
-            if loc == "UNK":
-                skipped += len(items)
-                continue
-
-            for item in items:
-                feats = item.get("feats", {})
-                if not feats:
-                    skipped += 1
-                    continue
-
-                try:
-                    add_location_sample(
-                        s.location_db, feats, loc, item["fp"].name)
-                    saved += 1
-                except:
-                    skipped += 1
-
-        save_location_db(s.location_db)
-
-        s.save_lbl.configure(
-            text=f"✅ Сохранено: {saved} | Пропущено: {skipped}",
-            text_color=P["ok"])
-        s.log_fn(
-            f"  ✅ Автообучение: сохранено {saved} примеров", "success")
-        _play_done_sound()
-
-        s.status_lbl.configure(
-            text=f"Сохранено {saved} примеров в базу знаний",
-            text_color=P["ok"])
-
-
-# ═══════════════════════════════════════════
-#  ОКНО РАЗМЕТКИ СКРИНШОТОВ
-# ═══════════════════════════════════════════
-class LabelWindow(ctk.CTkToplevel):
-    def __init__(s, parent, cfg, az, trigger_db, location_db, log_fn):
-        super().__init__(parent)
-        s.title("Разметка скриншотов")
-        s.configure(fg_color=P["bg"])
-        s.transient(parent)
-
-        s.cfg = cfg;
-        s.az = az
-        s.trigger_db = trigger_db
-        s.location_db = location_db
-        s.log_fn = log_fn
-
-        s.files = [];
-        s.idx = 0;
-        s.photo = None
-        s.current_features = {};
-        s.current_ocr = []
-        s.is_batch = False
-        s._batch_stop_event = threading.Event()  # ПЕРЕИМЕНОВАНО
-
-        sw, sh = s.winfo_screenwidth(), s.winfo_screenheight()
-        s.geometry(f"1250x850+{(sw - 1250) // 2}+{(sh - 850) // 2}")
-        s._build();
-        s._update_stats()
-
-    def _build(s):
-        hf = ctk.CTkFrame(s, fg_color=P["card"], corner_radius=0, height=55)
-        hf.pack(fill="x");
-        hf.pack_propagate(False)
-        ctk.CTkLabel(hf, text="Разметка и обучение",
-                     font=ctk.CTkFont(size=15, weight="bold"),
-                     text_color=P["accent"]).pack(side="left", padx=16, pady=14)
-        s.stats_lbl = ctk.CTkLabel(hf, text="", font=ctk.CTkFont(size=10),
-                                   text_color=P["gold"])
-        s.stats_lbl.pack(side="right", padx=16)
-
-        mn = ctk.CTkFrame(s, fg_color="transparent")
-        mn.pack(fill="both", expand=True, padx=8, pady=6)
-        mn.columnconfigure(0, weight=2);
-        mn.columnconfigure(1, weight=1)
-        mn.rowconfigure(0, weight=1)
-
-        lp = ctk.CTkFrame(mn, fg_color=P["card"], corner_radius=10)
-        lp.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-
-        batch_sec = ctk.CTkFrame(lp, fg_color=P["entry"], corner_radius=8,
-                                 border_width=1, border_color=P["border"])
-        batch_sec.pack(fill="x", padx=8, pady=(8, 4))
-
-        ctk.CTkLabel(batch_sec, text="⚡ Быстрое обучение (вся папка = одна категория)",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color=P["gold"]).pack(padx=8, pady=(6, 2), anchor="w")
-
-        bf1 = ctk.CTkFrame(batch_sec, fg_color="transparent")
-        bf1.pack(fill="x", padx=8, pady=2)
-        ctk.CTkLabel(bf1, text="Категория:", font=ctk.CTkFont(size=10),
-                     text_color=P["t2"]).pack(side="left")
-        s.batch_cat_var = ctk.StringVar(value="TAB - Таблетки")
-        ctk.CTkOptionMenu(bf1, values=["TAB - Таблетки", "VAC - Вакцины", "PMP - ПМП"],
-                          variable=s.batch_cat_var, width=160, height=28,
-                          fg_color=P["bg"], button_color=P["accent"],
-                          dropdown_fg_color=P["card"], text_color=P["text"],
-                          font=ctk.CTkFont(size=10)).pack(side="right")
-
-        bf2 = ctk.CTkFrame(batch_sec, fg_color="transparent")
-        bf2.pack(fill="x", padx=8, pady=2)
-        ctk.CTkLabel(bf2, text="Больница:", font=ctk.CTkFont(size=10),
-                     text_color=P["t2"]).pack(side="left")
-        s.batch_loc_var = ctk.StringVar(value="ELSH")
-        ctk.CTkOptionMenu(bf2, values=["ELSH", "Sandy", "Paleto", "Неизвестно"],
-                          variable=s.batch_loc_var, width=160, height=28,
-                          fg_color=P["bg"], button_color=P["gold"],
-                          dropdown_fg_color=P["card"], text_color=P["text"],
-                          font=ctk.CTkFont(size=10)).pack(side="right")
-
-        s.batch_pmp_frame = ctk.CTkFrame(batch_sec, fg_color="transparent")
-        s.batch_pmp_var = ctk.StringVar(value="city")
-        ctk.CTkLabel(s.batch_pmp_frame, text="Район ПМП:",
-                     font=ctk.CTkFont(size=10), text_color=P["orange"]).pack(side="left", padx=8)
-        ctk.CTkRadioButton(s.batch_pmp_frame, text="Город", variable=s.batch_pmp_var,
-                           value="city", text_color=P["accent"],
-                           font=ctk.CTkFont(size=10)).pack(side="left", padx=4)
-        ctk.CTkRadioButton(s.batch_pmp_frame, text="Пригород", variable=s.batch_pmp_var,
-                           value="suburb", text_color=P["gold"],
-                           font=ctk.CTkFont(size=10)).pack(side="left", padx=4)
-
-        s.batch_cat_var.trace_add("write", s._on_batch_cat_change)
-
-        bf3 = ctk.CTkFrame(batch_sec, fg_color="transparent")
-        bf3.pack(fill="x", padx=8, pady=(4, 8))
-        s.batch_btn = ctk.CTkButton(
-            bf3, text="📁 Выбрать папку и обучить", height=38,
-            fg_color=P["gold"], hover_color="#FFE033",
-            text_color="#1a1a1a", font=ctk.CTkFont(size=12, weight="bold"),
-            corner_radius=8, command=s._batch_train)
-        s.batch_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        s.batch_stop_btn = ctk.CTkButton(
-            bf3, text="Стоп", height=38, width=60,
-            fg_color=P["red"], hover_color=P["rh"],
-            text_color="#fff", font=ctk.CTkFont(size=11),
-            corner_radius=8, command=s._on_batch_stop_click, state="disabled")
-        s.batch_stop_btn.pack(side="right")
-
-        s.batch_prog = ctk.CTkProgressBar(batch_sec, height=5,
-                                          progress_color=P["gold"], fg_color=P["entry"])
-        s.batch_prog.pack(fill="x", padx=8, pady=(0, 4));
-        s.batch_prog.set(0)
-        s.batch_status = ctk.CTkLabel(batch_sec, text="",
-                                      font=ctk.CTkFont(size=9), text_color=P["dim"])
-        s.batch_status.pack(padx=8, pady=(0, 6))
-
-        ctk.CTkFrame(lp, height=1, fg_color=P["border"]).pack(fill="x", padx=8, pady=4)
-
-        ctk.CTkLabel(lp, text="Или по одному:",
-                     font=ctk.CTkFont(size=11, weight="bold"),
-                     text_color=P["t2"]).pack(padx=8, anchor="w")
-
-        load_f = ctk.CTkFrame(lp, fg_color="transparent")
-        load_f.pack(fill="x", padx=8, pady=(2, 4))
-        ctk.CTkButton(load_f, text="Загрузить папку", height=32,
-                      fg_color=P["blue"], hover_color="#2563EB",
-                      text_color="#fff", font=ctk.CTkFont(size=10),
-                      command=s._load_folder).pack(side="left", fill="x", expand=True, padx=(0, 4))
-        ctk.CTkButton(load_f, text="Файлы", height=32,
-                      fg_color=P["entry"], hover_color=P["bh"],
-                      border_width=1, border_color=P["border"],
-                      text_color=P["t2"], font=ctk.CTkFont(size=10),
-                      command=s._load_files).pack(side="left")
-
-        s.img_frame = ctk.CTkFrame(lp, fg_color=P["entry"], corner_radius=8)
-        s.img_frame.pack(fill="both", expand=True, padx=8, pady=4)
-        s.img_lbl = ctk.CTkLabel(s.img_frame, text="Загрузите скриншоты",
-                                 font=ctk.CTkFont(size=11), text_color=P["dim"])
-        s.img_lbl.pack(expand=True)
-
-        s.fname_lbl = ctk.CTkLabel(lp, text="",
-                                   font=ctk.CTkFont(family="Consolas", size=9),
-                                   text_color=P["t2"])
-        s.fname_lbl.pack(fill="x", padx=8, pady=(2, 0))
-
-        prog_f = ctk.CTkFrame(lp, fg_color="transparent")
-        prog_f.pack(fill="x", padx=8, pady=(2, 4))
-        s.prog_lbl = ctk.CTkLabel(prog_f, text="0/0",
-                                  font=ctk.CTkFont(size=10), text_color=P["dim"])
-        s.prog_lbl.pack(side="left")
-        s.prog_bar = ctk.CTkProgressBar(prog_f, height=5,
-                                        progress_color=P["accent"], fg_color=P["entry"])
-        s.prog_bar.pack(side="left", fill="x", expand=True, padx=8);
-        s.prog_bar.set(0)
-
-        nav_f = ctk.CTkFrame(lp, fg_color="transparent")
-        nav_f.pack(fill="x", padx=8, pady=(0, 8))
-        s.btn_prev = ctk.CTkButton(nav_f, text="◀", width=60, height=32,
-                                   fg_color=P["entry"], hover_color=P["bh"],
-                                   border_width=1, border_color=P["border"],
-                                   text_color=P["t2"], corner_radius=8,
-                                   command=s._prev, state="disabled")
-        s.btn_prev.pack(side="left")
-        ctk.CTkButton(nav_f, text="Пропустить", width=90, height=32,
-                      fg_color=P["entry"], hover_color=P["bh"],
-                      border_width=1, border_color=P["border"],
-                      text_color=P["warn"], corner_radius=8,
-                      command=s._skip).pack(side="left", padx=4)
-        s.btn_next = ctk.CTkButton(nav_f, text="▶", width=60, height=32,
-                                   fg_color=P["accent"], hover_color=P["ah"],
-                                   text_color="#fff", corner_radius=8,
-                                   command=s._next, state="disabled")
-        s.btn_next.pack(side="right")
-
-        # ══ Правая панель ══
-        rp = ctk.CTkFrame(mn, fg_color=P["card"], corner_radius=10)
-        rp.grid(row=0, column=1, sticky="nsew")
-
-        ctk.CTkLabel(rp, text="Что на скрине?",
-                     font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color=P["text"]).pack(padx=12, pady=(12, 4), anchor="w")
-
-        ctk.CTkLabel(rp, text="Категория:",
-                     font=ctk.CTkFont(size=10), text_color=P["t2"]).pack(padx=12, anchor="w")
-
-        cat_f = ctk.CTkFrame(rp, fg_color="transparent")
-        cat_f.pack(fill="x", padx=12, pady=(2, 6))
-        s.cat_var = ctk.StringVar(value="")
-        for text, val, color in [("💊 Таблетки", "TAB", P["ok"]),
-                                 ("💉 Вакцины", "VAC", P["blue"]),
-                                 ("🚑 ПМП", "PMP", P["orange"])]:
-            ctk.CTkButton(cat_f, text=text, height=36,
-                          fg_color=P["entry"], hover_color=color,
-                          border_width=2, border_color=P["border"],
-                          text_color=P["text"],
-                          font=ctk.CTkFont(size=11, weight="bold"),
-                          corner_radius=8,
-                          command=lambda v=val: s._set_cat(v)).pack(fill="x", pady=1)
-
-        s.cat_display = ctk.CTkLabel(rp, text="Не выбрано",
-                                     font=ctk.CTkFont(size=11, weight="bold"),
-                                     text_color=P["warn"])
-        s.cat_display.pack(padx=12, pady=(0, 6))
-
-        s.pmp_frame = ctk.CTkFrame(rp, fg_color=P["entry"], corner_radius=8,
-                                   border_width=1, border_color=P["border"])
-        s.pmp_district_var = ctk.StringVar(value="city")
-        ctk.CTkLabel(s.pmp_frame, text="Район ПМП:",
-                     font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=P["orange"]).pack(padx=8, pady=(6, 2), anchor="w")
-        pmp_btns = ctk.CTkFrame(s.pmp_frame, fg_color="transparent")
-        pmp_btns.pack(fill="x", padx=8, pady=(0, 6))
-        ctk.CTkButton(pmp_btns, text="🏙 Город (ELSH)", height=30,
-                      fg_color=P["accent"], hover_color=P["ah"], text_color="#fff",
-                      font=ctk.CTkFont(size=10),
-                      command=lambda: s._set_pmp_district("city")).pack(fill="x", pady=1)
-        ctk.CTkButton(pmp_btns, text="🌄 Пригород (Sandy/Paleto)", height=30,
-                      fg_color=P["gold"], hover_color="#FFE033", text_color="#1a1a1a",
-                      font=ctk.CTkFont(size=10),
-                      command=lambda: s._set_pmp_district("suburb")).pack(fill="x", pady=1)
-        s.pmp_district_lbl = ctk.CTkLabel(s.pmp_frame, text="",
-                                          font=ctk.CTkFont(size=9), text_color=P["dim"])
-        s.pmp_district_lbl.pack(padx=8, pady=(0, 4))
-
-        ctk.CTkLabel(rp, text="Больница:",
-                     font=ctk.CTkFont(size=10), text_color=P["t2"]).pack(padx=12, anchor="w")
-
-        loc_f = ctk.CTkFrame(rp, fg_color="transparent")
-        loc_f.pack(fill="x", padx=12, pady=(2, 6))
-        s.loc_var = ctk.StringVar(value="")
-        for text, val, color in [("🏥 ELSH (Город)", "ELSH", P["accent"]),
-                                 ("🏜 Sandy Shores", "Sandy", P["gold"]),
-                                 ("🌊 Paleto Bay", "Paleto", P["purple"]),
-                                 ("❓ Неизвестно", "UNK", P["dim"])]:
-            ctk.CTkButton(loc_f, text=text, height=32,
-                          fg_color=P["entry"], hover_color=color,
-                          border_width=2, border_color=P["border"],
-                          text_color=P["text"], font=ctk.CTkFont(size=10),
-                          corner_radius=8,
-                          command=lambda v=val: s._set_loc(v)).pack(fill="x", pady=1)
-
-        s.loc_display = ctk.CTkLabel(rp, text="Не выбрано",
-                                     font=ctk.CTkFont(size=10), text_color=P["warn"])
-        s.loc_display.pack(padx=12, pady=(0, 6))
-
-        ctk.CTkFrame(rp, height=1, fg_color=P["border"]).pack(fill="x", padx=8, pady=4)
-
-        s.save_btn = ctk.CTkButton(rp, text="✅ Сохранить", height=40,
-                                   fg_color=P["accent"], hover_color=P["ah"],
-                                   text_color="#fff",
-                                   font=ctk.CTkFont(size=12, weight="bold"),
-                                   corner_radius=10, state="disabled",
-                                   command=s._save_label)
-        s.save_btn.pack(fill="x", padx=12, pady=4)
-
-        ctk.CTkButton(rp, text="⏭ Сохранить + следующий", height=34,
-                      fg_color=P["blue"], hover_color="#2563EB",
-                      text_color="#fff", font=ctk.CTkFont(size=10),
-                      corner_radius=8, command=s._save_and_next).pack(fill="x", padx=12, pady=2)
-
-        ctk.CTkFrame(rp, height=1, fg_color=P["border"]).pack(fill="x", padx=8, pady=4)
-
-        ctk.CTkLabel(rp, text="OCR текст:",
-                     font=ctk.CTkFont(size=10), text_color=P["t2"]).pack(padx=12, anchor="w")
-        s.ocr_text = Text(rp, font=("Consolas", 8), bg=P["log"], fg=P["t2"],
-                          relief="flat", borderwidth=0, padx=4, pady=4, wrap="word", height=5)
-        s.ocr_text.pack(fill="x", padx=12, pady=(2, 4))
-
-        s.analysis_lbl = ctk.CTkLabel(rp, text="",
-                                      font=ctk.CTkFont(size=10),
-                                      text_color=P["dim"], wraplength=280)
-        s.analysis_lbl.pack(padx=12, pady=4)
-
-        ctk.CTkFrame(rp, height=1, fg_color=P["border"]).pack(fill="x", padx=8, pady=4)
-
-        # ── Управление базой ──
-        db_mgmt = ctk.CTkFrame(rp, fg_color="transparent")
-        db_mgmt.pack(fill="x", padx=12, pady=(0, 4))
-        ctk.CTkLabel(db_mgmt, text="Управление базой:",
-                     font=ctk.CTkFont(size=10, weight="bold"),
-                     text_color=P["t2"]).pack(anchor="w", pady=(0, 2))
-        ctk.CTkButton(db_mgmt, text="🗑 Удалить все TAB из базы", height=26,
-                      fg_color=P["entry"], hover_color=P["bh"],
-                      border_width=1, border_color=P["border"],
-                      text_color=P["ok"], font=ctk.CTkFont(size=9),
-                      command=lambda: s._delete_cat_from_db("TAB")).pack(fill="x", pady=1)
-        ctk.CTkButton(db_mgmt, text="🗑 Удалить все VAC из базы", height=26,
-                      fg_color=P["entry"], hover_color=P["bh"],
-                      border_width=1, border_color=P["border"],
-                      text_color=P["blue"], font=ctk.CTkFont(size=9),
-                      command=lambda: s._delete_cat_from_db("VAC")).pack(fill="x", pady=1)
-        ctk.CTkButton(db_mgmt, text="🗑 Удалить все PMP из базы", height=26,
-                      fg_color=P["entry"], hover_color=P["bh"],
-                      border_width=1, border_color=P["border"],
-                      text_color=P["orange"], font=ctk.CTkFont(size=9),
-                      command=lambda: s._delete_cat_from_db("PMP")).pack(fill="x", pady=1)
-        ctk.CTkButton(db_mgmt, text="🗑 Удалить выбранный скрин из базы", height=26,
-                      fg_color=P["entry"], hover_color=P["rh"],
-                      border_width=1, border_color=P["border"],
-                      text_color=P["err"], font=ctk.CTkFont(size=9),
-                      command=s._delete_current_from_db).pack(fill="x", pady=1)
-
-        s.db_stats_lbl = ctk.CTkLabel(rp, text="",
-                                      font=ctk.CTkFont(size=9),
-                                      text_color=P["dim"], justify="left")
-        s.db_stats_lbl.pack(padx=12, pady=(0, 8), anchor="w")
-
-    def _on_batch_cat_change(s, *args):
-        raw = s.batch_cat_var.get()
-        if "PMP" in raw:
-            s.batch_pmp_frame.pack(fill="x", padx=8, pady=2)
-        else:
-            s.batch_pmp_frame.pack_forget()
-
-    def _set_cat(s, val):
-        s.cat_var.set(val)
-        names = {"TAB": "💊 Таблетки", "VAC": "💉 Вакцины", "PMP": "🚑 ПМП"}
-        colors = {"TAB": P["ok"], "VAC": P["blue"], "PMP": P["orange"]}
-        s.cat_display.configure(text=names.get(val, val),
-                                text_color=colors.get(val, P["text"]))
-        if val == "PMP":
-            s.pmp_frame.pack(fill="x", padx=12, pady=(0, 4), after=s.cat_display)
-        else:
-            s.pmp_frame.pack_forget()
-        s._check_can_save()
-
-    def _set_pmp_district(s, district):
-        s.pmp_district_var.set(district)
-        if district == "city":
-            s._set_loc("ELSH")
-            s.pmp_district_lbl.configure(text="→ Город (ELSH)", text_color=P["accent"])
-        else:
-            s.pmp_district_lbl.configure(text="→ Пригород (выберите Sandy/Paleto)", text_color=P["gold"])
-
-    def _set_loc(s, val):
-        s.loc_var.set(val)
-        names = {"ELSH": "🏥 ELSH", "Sandy": "🏜 Sandy",
-                 "Paleto": "🌊 Paleto", "UNK": "❓ Неизвестно"}
-        colors = {"ELSH": P["accent"], "Sandy": P["gold"],
-                  "Paleto": P["purple"], "UNK": P["dim"]}
-        s.loc_display.configure(text=names.get(val, val),
-                                text_color=colors.get(val, P["text"]))
-        s._check_can_save()
-
-    def _check_can_save(s):
-        s.save_btn.configure(state="normal" if s.cat_var.get() and s.files else "disabled")
-
-    def _on_batch_stop_click(s):
-        """Кнопка Стоп для пакетного обучения."""
-        s._batch_stop_event.set()
-        s.batch_stop_btn.configure(state="disabled")
-
-    def _batch_train(s):
-        d = filedialog.askdirectory(title="Папка со скриншотами одной категории")
-        if not d: return
-        files = sorted([p for p in Path(d).iterdir()
-                        if p.is_file() and p.suffix.lower() in EXTS])
-        if not files:
-            s.log_fn("  Папка пуста", "warning");
-            return
-
-        raw_cat = s.batch_cat_var.get()
-        cat = raw_cat.split(" - ")[0].strip() if " - " in raw_cat else raw_cat.strip()
-        loc = s.batch_loc_var.get()
-        if loc == "Неизвестно": loc = "UNK"
-
-        if cat == "PMP":
-            pmp_dist = s.batch_pmp_var.get()
-            if pmp_dist == "city": loc = "ELSH"
-
-        s.log_fn(f"  Обучение: {len(files)} файлов → {cat} / {loc}", "gold")
-        s.is_batch = True
-        s._batch_stop_event.clear()
-        s.batch_btn.configure(state="disabled")
-        s.batch_stop_btn.configure(state="normal")
-        s.batch_status.configure(text="Обучение...", text_color=P["warn"])
-        threading.Thread(target=s._do_batch_train, args=(files, cat, loc), daemon=True).start()
-
-    def _do_batch_train(s, files, cat, loc):
-        total = len(files);
-        done = [0];
-        ok = [0];
-        errors = [0]
-        lock = threading.Lock()
-
-        def process_one(fp):
-            if s._batch_stop_event.is_set(): return
-            try:
-                img = _ld(fp)
-                if img is None:
-                    with lock: errors[0] += 1
-                    return
-                ctx = ImageContext(img, s.cfg)
-                feats = extract_features(ctx)
-
-                ocr_texts = []
-                if cat in ("TAB", "VAC", "PMP"):
-                    for rx, ry, rw, rh in s.cfg.CHAT_SCAN_ROIS[:1]:
-                        roi = ctx.crop(rx, ry, rw, rh)
-                        if roi is None: continue
-                        gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-                        if float(np.std(gray_roi)) < 10: continue
-                        t, conf = _ocr.read(roi, mc=0.1, mh=3, ml=2)
-                        if t and len(t) >= 3: ocr_texts.append(t.lower().strip())
-                        break
-
-                with lock:
-                    add_trigger_sample(s.trigger_db, fp.name, cat, ocr_texts, feats)
-                    if loc != "UNK" and feats:
-                        add_location_sample(s.location_db, feats, loc, fp.name)
-                    for sample in s.trigger_db["labeled"]:
-                        if sample["file"] == fp.name:
-                            sample["hosp"] = loc;
-                            break
-                    ok[0] += 1
-            except Exception as e:
-                with lock:
-                    errors[0] += 1
-                s.log_fn(f"  Ошибка {fp.name}: {str(e)[:40]}", "error")
-
-            with lock:
-                done[0] += 1
-                progress = done[0] / total
-                d, t, o, er = done[0], total, ok[0], errors[0]
-            s.after(0, lambda p=progress, d=d, t=t, o=o, e=er:
-            s._update_batch_progress(p, d, t, o, e))
-
-        num_workers = min(4, max(1, len(files) // 2))
-        with ThreadPoolExecutor(max_workers=num_workers, thread_name_prefix="batch") as pool:
-            futures = [pool.submit(process_one, fp) for fp in files]
-            for f in futures:
-                if s._batch_stop_event.is_set(): break
-                f.result()
-
-        save_trigger_db(s.trigger_db)
-        save_location_db(s.location_db)
-        s.after(0, lambda: s._batch_done(ok[0], errors[0], total))
-
-    def _update_batch_progress(s, progress, done, total, ok, errors):
-        s.batch_prog.set(progress)
-        s.batch_status.configure(
-            text=f"{done}/{total} — ОК: {ok}, Ошибок: {errors}", text_color=P["info"])
-
-    def _batch_done(s, ok, errors, total):
-        s.is_batch = False
-        s.batch_btn.configure(state="normal")
-        s.batch_stop_btn.configure(state="disabled")
-        s.batch_prog.set(1.0)
-        s.batch_status.configure(
-            text=f"✅ Готово: {ok}/{total} (ошибок: {errors})", text_color=P["ok"])
-        s.log_fn(f"  Обучение завершено: {ok}/{total}", "success")
-        _play_done_sound()
-        s._update_stats()
-
-    def _delete_cat_from_db(s, cat):
-        """Удаляет все примеры категории из базы триггеров."""
-        before = len(s.trigger_db.get("labeled", []))
-        s.trigger_db["labeled"] = [
-            item for item in s.trigger_db.get("labeled", [])
-            if item.get("cat") != cat
-        ]
-        if cat in s.trigger_db.get("cat_keywords", {}):
-            s.trigger_db["cat_keywords"][cat] = []
-        after = len(s.trigger_db["labeled"])
-        removed = before - after
-        save_trigger_db(s.trigger_db)
-        cat_names = {"TAB": "Таблетки", "VAC": "Вакцины", "PMP": "ПМП"}
-        s.log_fn(f"  🗑 Удалено {removed} примеров {cat_names.get(cat, cat)} из базы", "warning")
-        s._update_stats()
-
-    def _delete_current_from_db(s):
-        """Удаляет текущий скрин из базы триггеров."""
-        if not s.files: return
-        fp = s.files[s.idx]
-        before = len(s.trigger_db.get("labeled", []))
-        s.trigger_db["labeled"] = [
-            item for item in s.trigger_db.get("labeled", [])
-            if item.get("file") != fp.name
-        ]
-        after = len(s.trigger_db["labeled"])
-        if before > after:
-            save_trigger_db(s.trigger_db)
-            s.log_fn(f"  🗑 {fp.name} удалён из базы", "warning")
-            s.analysis_lbl.configure(text="Удалён из базы", text_color=P["warn"])
-        else:
-            s.log_fn(f"  {fp.name} не найден в базе", "dim")
-        s._update_stats()
-
-    def _load_folder(s):
-        d = filedialog.askdirectory(title="Папка со скриншотами")
-        if not d: return
-        files = sorted([p for p in Path(d).iterdir()
-                        if p.is_file() and p.suffix.lower() in EXTS])
-        if not files: s.log_fn("  Папка пуста", "warning"); return
-        s.files = files;
-        s.idx = 0
-        s.log_fn(f"  Загружено {len(files)} файлов", "info")
-        s._show_current()
-
-    def _load_files(s):
-        fps = filedialog.askopenfilenames(title="Скриншоты",
-                                          filetypes=[("Изображения", "*.png *.jpg *.jpeg *.bmp")])
-        if not fps: return
-        s.files = [Path(f) for f in fps];
-        s.idx = 0
-        s.log_fn(f"  Загружено {len(s.files)} файлов", "info")
-        s._show_current()
-
-    def _show_current(s):
-        if not s.files: return
-        fp = s.files[s.idx];
-        total = len(s.files)
-        s.prog_lbl.configure(text=f"{s.idx + 1}/{total}")
-        s.prog_bar.set((s.idx + 1) / total)
-        s.fname_lbl.configure(text=f"  {fp.name}")
-        s.btn_prev.configure(state="normal" if s.idx > 0 else "disabled")
-        s.btn_next.configure(state="normal" if s.idx < total - 1 else "disabled")
-        s.cat_var.set("");
-        s.loc_var.set("")
-        s.cat_display.configure(text="Не выбрано", text_color=P["warn"])
-        s.loc_display.configure(text="Не выбрано", text_color=P["warn"])
-        s.pmp_frame.pack_forget()
-        s.save_btn.configure(state="disabled")
-        s.ocr_text.delete("1.0", END)
-        s.analysis_lbl.configure(text="Анализирую...", text_color=P["warn"])
-
-        labeled = {item["file"]: item for item in s.trigger_db.get("labeled", [])}
-        if fp.name in labeled:
-            existing = labeled[fp.name]
-            if existing.get("cat"): s._set_cat(existing["cat"])
-            if existing.get("hosp"): s._set_loc(existing["hosp"])
-            s.analysis_lbl.configure(
-                text=f"✅ Уже размечен: {existing.get('cat', '')} / {existing.get('hosp', '')}",
-                text_color=P["ok"])
-
-        try:
-            pil = Image.open(fp)
-            r = min(700 / pil.width, 350 / pil.height)
-            pil = pil.resize((int(pil.width * r), int(pil.height * r)), Image.LANCZOS)
-            s.photo = ImageTk.PhotoImage(pil)
-            s.img_lbl.configure(image=s.photo, text="")
-        except:
-            s.img_lbl.configure(image=None, text="Ошибка")
-
-        threading.Thread(target=s._analyze_current, args=(fp,), daemon=True).start()
-
-    def _analyze_current(s, fp):
-        try:
-            img = _ld(fp)
-            if img is None: return
-            ctx = ImageContext(img, s.cfg)
-            feats = extract_features(ctx);
-            s.current_features = feats
-            found, cat_code, txts = find_trigger(ctx, trigger_db=s.trigger_db)
-            s.current_ocr = txts
-            db_cat, db_conf, db_words = predict_cat_from_db(s.trigger_db, txts)
-
-            def update():
-                s.ocr_text.delete("1.0", END)
-                if txts:
-                    for t in txts: s.ocr_text.insert(END, t + "\n")
-                else:
-                    s.ocr_text.insert(END, "(OCR пусто)")
-                parts = []
-                if found:
-                    cat_names = {"TAB": "Таблетки", "VAC": "Вакцины", "PMP": "ПМП"}
-                    parts.append(f"Авто: {cat_names.get(cat_code, cat_code)}")
-                    s._set_cat(cat_code)
-                else:
-                    parts.append("Авто: не найден")
-                if db_cat:
-                    parts.append(f"БД: {db_cat} ({db_conf:.0%})")
-                    if not found: s._set_cat(db_cat)
-                s.analysis_lbl.configure(text="\n".join(parts),
-                                         text_color=P["ok"] if found else P["warn"])
-
-            s.after(0, update)
-        except Exception as e:
-            s.after(0, lambda: s.analysis_lbl.configure(
-                text=f"Ошибка: {str(e)[:50]}", text_color=P["err"]))
-
-    def _save_label(s):
-        if not s.files: return
-        cat = s.cat_var.get();
-        loc = s.loc_var.get() or "UNK"
-        if not cat: s.log_fn("  Выберите категорию!", "warning"); return
-        fp = s.files[s.idx]
-        add_trigger_sample(s.trigger_db, fp.name, cat, s.current_ocr, s.current_features)
-        if loc and loc != "UNK" and s.current_features:
-            add_location_sample(s.location_db, s.current_features, loc, fp.name)
-        for sample in s.trigger_db["labeled"]:
-            if sample["file"] == fp.name: sample["hosp"] = loc; break
-        save_trigger_db(s.trigger_db)
-        s.log_fn(f"  ✅ {fp.name} → {cat} / {loc}", "success")
-        s._update_stats()
-        s.analysis_lbl.configure(text=f"✅ Сохранено: {cat} / {loc}", text_color=P["ok"])
-
-    def _save_and_next(s):
-        s._save_label()
-        if s.idx < len(s.files) - 1: s.idx += 1; s._show_current()
-
-    def _prev(s):
-        if s.idx > 0: s.idx -= 1; s._show_current()
-
-    def _next(s):
-        if s.idx < len(s.files) - 1: s.idx += 1; s._show_current()
-
-    def _skip(s):
-        if s.idx < len(s.files) - 1: s.idx += 1; s._show_current()
-
-    def _update_stats(s):
-        labeled = s.trigger_db.get("labeled", [])
-        total = len(labeled);
-        by_cat = {};
-        by_loc = {}
-        for item in labeled:
-            cat = item.get("cat", "?");
-            loc = item.get("hosp", "?")
-            by_cat[cat] = by_cat.get(cat, 0) + 1
-            by_loc[loc] = by_loc.get(loc, 0) + 1
-        kws = s.trigger_db.get("cat_keywords", {})
-        kw_counts = {k: len(v) for k, v in kws.items()}
-        lines = [f"Размечено: {total}"]
-        cat_names = {"TAB": "Табл", "VAC": "Вакц", "PMP": "ПМП"}
-        for cat, cnt in sorted(by_cat.items()):
-            kw_cnt = kw_counts.get(cat, 0)
-            lines.append(f"  {cat_names.get(cat, cat)}: {cnt} ({kw_cnt} сл.)")
-        lines.append("")
-        for loc, cnt in sorted(by_loc.items()):
-            lines.append(f"  {loc}: {cnt}")
-        loc_total = len(s.location_db.get("samples", []))
-        lines.append(f"\nЛокации: {loc_total}")
-        s.stats_lbl.configure(text=f"Размечено: {total} | Локации: {loc_total}")
-        s.db_stats_lbl.configure(text="\n".join(lines))
-
-
+        s._log("", "default")
+        s._log("  🔒 Работа с пропущенными — функция PRO версии", "warning")
+        s._log(f"  📋 Пропущено файлов: {len(s.skipped)}", "info")
+        s._log("  💰 Купить PRO: https://www.donationalerts.com/r/orange91323", "gold")
 def main():
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("dark-blue")
